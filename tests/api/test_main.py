@@ -25,6 +25,32 @@ class FakeReferenceProvider:
         return {"namespace": namespace, "as_of": as_of, "records": [{"code": "CN"}]}
 
 
+class FakeTransactionService:
+    def __init__(self) -> None:
+        self.submit_calls: list[tuple[Any, str]] = []
+        self.approval_calls: list[tuple[str, Any]] = []
+        self.cancel_calls: list[str] = []
+
+    async def submit(self, compilation: Any, idempotency_key: str) -> dict[str, Any]:
+        self.submit_calls.append((compilation, idempotency_key))
+        return {
+            "transaction_id": "tx-1",
+            "status": "ACCEPTED",
+            "replayed": idempotency_key == "replay-key",
+        }
+
+    async def get(self, transaction_id: str) -> dict[str, Any]:
+        return {"transaction_id": transaction_id, "status": "RUNNING"}
+
+    async def approve(self, transaction_id: str, decision: Any) -> dict[str, Any]:
+        self.approval_calls.append((transaction_id, decision))
+        return {"transaction_id": transaction_id, "status": "RUNNING"}
+
+    async def cancel(self, transaction_id: str) -> dict[str, Any]:
+        self.cancel_calls.append(transaction_id)
+        return {"transaction_id": transaction_id, "status": "CANCELLED"}
+
+
 def test_healthz_has_request_id() -> None:
     client = TestClient(create_app(compile_service=FakeCompileService()))
     response = client.get("/healthz", headers={"X-Request-ID": "test-request"})
@@ -126,6 +152,90 @@ def test_errors_are_stable_and_do_not_expose_tracebacks() -> None:
     assert response.status_code == 422
     assert set(response.json()["error"]) == {"code", "message", "request_id"}
     assert "Traceback" not in response.text
+
+
+def test_transaction_transport_submit_replay_lookup_approval_and_cancel() -> None:
+    runtime = FakeTransactionService()
+    client = TestClient(
+        create_app(compile_service=FakeCompileService(), transaction_service=runtime)
+    )
+    body = {
+        "sourceSchemaVersion": "cargomesh.transaction/v1",
+        "payload": {"schema_version": "cargomesh.transaction/v1"},
+        "context": {"tenant_id": "tenant-a"},
+    }
+
+    created = client.post("/v1/transactions", json=body, headers={"Idempotency-Key": "new-key"})
+    replayed = client.post(
+        "/v1/transactions", json=body, headers={"Idempotency-Key": "replay-key"}
+    )
+    looked_up = client.get("/v1/transactions/tx-1")
+    approved = client.post(
+        "/v1/transactions/tx-1/approval",
+        json={"step_id": "step-1", "approved": True, "decided_by": "operator"},
+    )
+    cancelled = client.post("/v1/transactions/tx-1/cancel")
+
+    assert created.status_code == 202
+    assert replayed.status_code == 200
+    assert looked_up.status_code == approved.status_code == cancelled.status_code == 200
+    assert runtime.submit_calls[0][1] == "new-key"
+    assert runtime.approval_calls[0][1].step_id == "step-1"
+    assert runtime.cancel_calls == ["tx-1"]
+
+
+def test_transaction_transport_requires_valid_key_and_runtime() -> None:
+    body = {
+        "source_schema_version": "cargomesh.transaction/v1",
+        "payload": {"schema_version": "cargomesh.transaction/v1"},
+    }
+    client = TestClient(create_app(compile_service=FakeCompileService()))
+
+    missing = client.post("/v1/transactions", json=body)
+    invalid = client.post(
+        "/v1/transactions", json=body, headers={"Idempotency-Key": "bad key"}
+    )
+    unavailable = client.post(
+        "/v1/transactions", json=body, headers={"Idempotency-Key": "valid-key"}
+    )
+
+    assert missing.status_code == invalid.status_code == 400
+    assert missing.json()["error"]["code"] == "missing_idempotency_key"
+    assert invalid.json()["error"]["code"] == "invalid_idempotency_key"
+    assert unavailable.status_code == 503
+    assert unavailable.json()["error"]["code"] == "runtime_unavailable"
+
+
+def test_approval_request_rejects_unknown_fields_without_traceback() -> None:
+    runtime = FakeTransactionService()
+    client = TestClient(create_app(transaction_service=runtime))
+    response = client.post(
+        "/v1/transactions/tx-1/approval",
+        json={
+            "step_id": "step-1",
+            "approved": False,
+            "decided_by": "operator",
+            "unexpected": "field",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert "Traceback" not in response.text
+
+
+def test_rejected_approval_requires_audit_reason() -> None:
+    runtime = FakeTransactionService()
+    client = TestClient(create_app(transaction_service=runtime))
+
+    response = client.post(
+        "/v1/transactions/tx-1/approval",
+        json={"step_id": "step-1", "approved": False, "decided_by": "operator"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert runtime.approval_calls == []
 
 
 def test_unhandled_errors_are_redacted() -> None:

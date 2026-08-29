@@ -1,11 +1,16 @@
 # CargoMesh
 
-CargoMesh is a business-transaction compiler for container logistics. Board 1
-turns a pinned DCSA Track & Trace 2.3 query into deterministic, versioned
-Transaction IR. It validates and explains the conversion; it does not claim that
-a carrier transaction has been executed.
+CargoMesh is a business-transaction compiler and durable execution runtime for
+container logistics. Board 1 turns a pinned DCSA Track & Trace 2.3 query into
+deterministic, versioned Transaction IR. Board 2 submits an execution plan
+idempotently and runs it through Temporal with explicit approval, retry,
+compensation, cancellation, and queryable state.
 
-## Implemented Board 1 surface
+Execution completion is deliberately named `EXECUTED_UNVERIFIED`. Independent
+cross-channel evidence is a later board, so CargoMesh never turns “the adapter
+returned” into an unsupported `SUCCESS` or `VERIFIED` claim.
+
+## Implemented surface
 
 | Area | Implementation |
 |---|---|
@@ -17,11 +22,16 @@ a carrier transaction has been executed.
 | Migration | Explicit graph, pure v0alpha1 → v1 step, before/after canonical documents and digests |
 | Reference data | Version/status/validity model, exact lookup, separate alias suggestions, 44 pinned TNT values |
 | HTTP API | Compile, schemas, supported capabilities, reference data, health and stable error envelopes |
+| Execution plan | Immutable v1 plan, ordered dependencies, explicit adapter operations, timeout/retry/approval/compensation |
+| Durable runtime | Temporal Workflow, Activity boundary, approval/cancel signals, status query and reverse compensation |
+| Idempotency | Atomic tenant-scoped SQLite reference index with replay, conflict and failed-start retry semantics |
+| Adapter boundary | Worker-side registry, safe failures and explicit synthetic local-demo adapter |
+| Transaction API | Create, status, approval and cancel with required `Idempotency-Key` |
 
-The first accepted capability is `shipment.track.read`. Booking writes,
-transaction persistence, Temporal orchestration, carrier adapters, evidence and
-authentication belong to later boards. Keeping those outside Board 1 prevents a
-contract compiler from pretending to be an execution engine.
+The first accepted capability remains `shipment.track.read`. Board 2 supplies the
+runtime, but not a real carrier or browser adapter. Route optimization, evidence
+verdicts, authentication/authorization and a distributed control-plane database
+belong to later boards.
 
 ## Quick start
 
@@ -69,6 +79,10 @@ The response includes normalized Transaction IR, canonical business JSON, a
 - `GET /v1/contracts/dcsa-tnt-query-v2.3/schema`
 - `POST /v1/ir/compile`
 - `GET /v1/reference-data/{namespace}?as_of=YYYY-MM-DD`
+- `POST /v1/transactions` (requires `Idempotency-Key`)
+- `GET /v1/transactions/{transaction_id}`
+- `POST /v1/transactions/{transaction_id}/approval`
+- `POST /v1/transactions/{transaction_id}/cancel`
 
 The compile request is deliberately explicit and rejects unknown fields:
 
@@ -79,6 +93,39 @@ The compile request is deliberately explicit and rejects unknown fields:
   "context": {"tenant_id": "tenant-a"}
 }
 ```
+
+## Durable runtime
+
+CargoMesh reuses the official Temporal Python SDK rather than implementing its
+own workflow engine. Run a Temporal development server separately, then start the
+two Board 2 processes for the explicit synthetic demonstration:
+
+```powershell
+uv run cargomesh-worker --enable-synthetic-adapter
+uv run cargomesh-runtime-api --enable-synthetic-adapter-binding
+```
+
+Both commands use `localhost:7233` and task queue
+`cargomesh-transactions-v1` by default. They can be configured with
+`CARGOMESH_TEMPORAL_TARGET`, `CARGOMESH_TEMPORAL_NAMESPACE`,
+`CARGOMESH_TEMPORAL_TASK_QUEUE`, and `CARGOMESH_SUBMISSION_DATABASE`.
+
+The flags are intentionally explicit: the included adapter returns an empty,
+synthetic event set and the notice `No carrier transaction was executed`. A real
+deployment must register a separately certified carrier or browser adapter.
+
+Submit a compiled IR or DCSA TNT source using the same body accepted by the
+compiler endpoint:
+
+```http
+POST /v1/transactions
+Idempotency-Key: customer-request-123
+Content-Type: application/json
+```
+
+An equivalent replay returns the original transaction with HTTP 200; the first
+accepted submission returns HTTP 202. Reusing the key for a different business
+digest returns HTTP 409.
 
 ## Standards lifecycle
 
@@ -102,6 +149,7 @@ src/cargomesh/
 ├─ application/     compile and reference-data use cases
 ├─ ir/              Transaction IR, canonicalization and migrations
 ├─ mapping/         DCSA TNT mapper, diagnostics and registry
+├─ runtime/         plans, state machine, idempotency, Temporal and adapter boundary
 └─ standards/       source integrity, compatibility and reference data
 
 third_party/dcsa/   pinned upstream bytes and license
@@ -122,4 +170,5 @@ The wheel includes reference CSVs and the pinned DCSA source snapshot, so
 
 CargoMesh metadata declares Apache-2.0. The vendored DCSA files remain under
 DCSA's Apache-2.0 license and retain their exact upstream license and provenance.
-See `NOTICE` and `docs/standards/dcsa-provenance.md`.
+See `NOTICE`, `docs/standards/dcsa-provenance.md`, and the Board 2 architecture
+and acceptance records under `docs/architecture/`.
