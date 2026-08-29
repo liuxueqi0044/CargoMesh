@@ -7,10 +7,13 @@ idempotently and runs it through Temporal with explicit approval, retry,
 compensation, cancellation, and queryable state.
 Board 3 executes checksum-pinned, read-only browser recipes in isolated
 Playwright contexts and stops on portal drift.
+Board 4 collects separately sourced evidence, persists immutable receipts, and
+produces deterministic, digest-protected verification reports.
 
-Execution completion is deliberately named `EXECUTED_UNVERIFIED`. Independent
-cross-channel evidence is a later board, so CargoMesh never turns “the adapter
-returned” into an unsupported `SUCCESS` or `VERIFIED` claim.
+Execution without a configured verifier remains deliberately named
+`EXECUTED_UNVERIFIED`. Only a separate evidence collector can produce
+`VERIFIED`; conflicts become `NEEDS_REVIEW`, and missing, stale, or insufficient
+evidence becomes `HALTED`.
 
 ## Implemented surface
 
@@ -32,11 +35,15 @@ returned” into an unsupported `SUCCESS` or `VERIFIED` claim.
 | Adapter packages | Strict manifest/recipe schemas, SHA-256 pinning, offline package checks and CLI |
 | Browser executor | Semantic locators, fresh contexts, exact-origin HTTP policy and drift signatures |
 | Adapter CI | Synthetic portal fault variants and real headless Chromium acceptance tests |
+| Evidence contracts | Immutable bounded observations, provenance, canonical digests and typed reports |
+| Verification engine | Pure claim matching and computed L0–L3 cross-channel independence |
+| Evidence receipts | Tenant-scoped append-only SQLite store with idempotent replay and conflict detection |
+| Evidence channel | Separate bounded HTTP collector and synthetic system-of-record fault service |
 
 The first accepted capability remains `shipment.track.read`. Board 3 supplies a
 synthetic browser adapter, not a real carrier integration. Route optimization,
-evidence verdicts, production authentication/authorization and a distributed
-control-plane database belong to later boards.
+production authentication/authorization and a distributed control-plane
+database belong to later boards.
 
 ## Quick start
 
@@ -153,6 +160,29 @@ uv run cargomesh-adapter check
 uv run cargomesh-adapter check --path C:\path\to\adapter-package
 ```
 
+### Board 4 verified browser path
+
+With Temporal running, start the execution portal, the separate evidence
+service, the worker, and runtime API in separate terminals:
+
+```powershell
+uv run cargomesh-synthetic-portal
+uv run cargomesh-synthetic-evidence
+uv run cargomesh-worker --enable-synthetic-browser-adapter --enable-synthetic-verifier
+uv run cargomesh-runtime-api --enable-synthetic-browser-binding --enable-synthetic-verification-binding
+```
+
+The browser adapter declares `synthetic.portal` as its execution source. The
+evidence collector reads `synthetic.ledger` over a second process with redirects
+and environment proxies disabled and a 64 KiB response ceiling. Receipt rows are
+stored before evaluation in `cargomesh-evidence.sqlite3`; configure this with
+`CARGOMESH_EVIDENCE_DATABASE` or `--evidence-database`.
+
+This demonstration can achieve L2 because collection is separate and the source
+system differs from execution. It is still synthetic and does not confirm a real
+carrier transaction. Use `cargomesh-synthetic-evidence --variant conflict`,
+`missing`, `stale`, or `server_error` to exercise fail-closed paths.
+
 Submit a compiled IR or DCSA TNT source using the same body accepted by the
 compiler endpoint:
 
@@ -190,7 +220,8 @@ src/cargomesh/
 ├─ ir/              Transaction IR, canonicalization and migrations
 ├─ mapping/         DCSA TNT mapper, diagnostics and registry
 ├─ runtime/         plans, state machine, idempotency, Temporal and adapter boundary
-└─ standards/       source integrity, compatibility and reference data
+├─ standards/       source integrity, compatibility and reference data
+└─ verification/    evidence collectors, receipts and deterministic verdict engine
 
 third_party/dcsa/   pinned upstream bytes and license
 tests/              offline unit, contract and API tests

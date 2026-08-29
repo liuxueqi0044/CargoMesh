@@ -74,5 +74,13 @@ def test_state_machine_is_explicit_and_terminal() -> None:
         transition(ExecutionStatus.RUNNING, ExecutionStatus.EXECUTED_UNVERIFIED)
         is ExecutionStatus.EXECUTED_UNVERIFIED
     )
+    assert (
+        transition(ExecutionStatus.RUNNING, ExecutionStatus.VERIFYING)
+        is ExecutionStatus.VERIFYING
+    )
+    assert (
+        transition(ExecutionStatus.VERIFYING, ExecutionStatus.VERIFIED)
+        is ExecutionStatus.VERIFIED
+    )
     with pytest.raises(InvalidExecutionTransition):
         transition(ExecutionStatus.EXECUTED_UNVERIFIED, ExecutionStatus.RUNNING)

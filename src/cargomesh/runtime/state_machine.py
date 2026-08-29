@@ -12,6 +12,7 @@ _ALLOWED_TRANSITIONS: dict[ExecutionStatus, frozenset[ExecutionStatus]] = {
         {
             ExecutionStatus.WAITING_APPROVAL,
             ExecutionStatus.COMPENSATING,
+            ExecutionStatus.VERIFYING,
             ExecutionStatus.EXECUTED_UNVERIFIED,
             ExecutionStatus.CANCELLED,
             ExecutionStatus.HALTED,
@@ -34,6 +35,16 @@ _ALLOWED_TRANSITIONS: dict[ExecutionStatus, frozenset[ExecutionStatus]] = {
             ExecutionStatus.CANCELLED,
         }
     ),
+    ExecutionStatus.VERIFYING: frozenset(
+        {
+            ExecutionStatus.VERIFIED,
+            ExecutionStatus.NEEDS_REVIEW,
+            ExecutionStatus.HALTED,
+            ExecutionStatus.CANCELLED,
+        }
+    ),
+    ExecutionStatus.VERIFIED: frozenset(),
+    ExecutionStatus.NEEDS_REVIEW: frozenset(),
     ExecutionStatus.EXECUTED_UNVERIFIED: frozenset(),
     ExecutionStatus.COMPENSATED: frozenset(),
     ExecutionStatus.REJECTED: frozenset(),

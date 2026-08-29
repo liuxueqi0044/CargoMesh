@@ -26,11 +26,12 @@ def _copy_valid_package(tmp_path: Path, name: str = "adapter") -> Path:
 
 
 def _write_manifest(
-    package_root: Path, recipe: bytes, *, minimum_version: str = "0.3.0"
+    package_root: Path, recipe: bytes, *, minimum_version: str = "0.4.0"
 ) -> None:
     manifest = {
-        "schema_version": "cargomesh.adapter-manifest/v1",
+        "schema_version": "cargomesh.adapter-manifest/v2",
         "name": "synthetic.browser.track",
+        "source_system": "synthetic.portal",
         "version": "0.1.0",
         "portal_version": "synthetic-portal/v1",
         "minimum_cargomesh_version": minimum_version,
@@ -49,9 +50,10 @@ def test_loads_builtin_synthetic_package_with_pinned_recipe() -> None:
     package = load_builtin_synthetic_package()
 
     assert package.manifest.name == "synthetic.browser.track"
+    assert package.manifest.source_system == "synthetic.portal"
     assert package.manifest.version == "0.1.0"
     assert package.manifest.portal_version == "synthetic-portal/v1"
-    assert package.manifest.minimum_cargomesh_version == "0.3.0"
+    assert package.manifest.minimum_cargomesh_version == "0.4.0"
     assert package.manifest.capabilities == ("shipment.track.read",)
     assert package.recipes["fetch"].operation == "fetch"
     assert package.recipes["fetch"].actions[0].kind == "navigate"

@@ -9,6 +9,11 @@ from typing import Annotated, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, model_validator
 
 from cargomesh.ir.enums import RiskClass, VerificationLevel
+from cargomesh.verification.models import (
+    ExecutionSource,
+    VerificationPlan,
+    VerificationReport,
+)
 
 EXECUTION_PLAN_SCHEMA_VERSION: Final[Literal["cargomesh.execution-plan/v1"]] = (
     "cargomesh.execution-plan/v1"
@@ -45,6 +50,9 @@ class ExecutionStatus(StrEnum):
     RUNNING = "RUNNING"
     WAITING_APPROVAL = "WAITING_APPROVAL"
     COMPENSATING = "COMPENSATING"
+    VERIFYING = "VERIFYING"
+    VERIFIED = "VERIFIED"
+    NEEDS_REVIEW = "NEEDS_REVIEW"
     EXECUTED_UNVERIFIED = "EXECUTED_UNVERIFIED"
     COMPENSATED = "COMPENSATED"
     REJECTED = "REJECTED"
@@ -55,6 +63,8 @@ class ExecutionStatus(StrEnum):
 TERMINAL_EXECUTION_STATUSES = frozenset(
     {
         ExecutionStatus.EXECUTED_UNVERIFIED,
+        ExecutionStatus.VERIFIED,
+        ExecutionStatus.NEEDS_REVIEW,
         ExecutionStatus.COMPENSATED,
         ExecutionStatus.REJECTED,
         ExecutionStatus.HALTED,
@@ -127,6 +137,7 @@ class ExecutionPlan(RuntimeModel):
     risk_class: RiskClass
     verification_level: VerificationLevel
     steps: tuple[ExecutionStep, ...]
+    verification: VerificationPlan | None = None
 
     @model_validator(mode="after")
     def validate_plan(self) -> ExecutionPlan:
@@ -154,6 +165,11 @@ class ExecutionPlan(RuntimeModel):
         maximum_step_risk = max(self.steps, key=lambda step: risk_rank[step.risk_class]).risk_class
         if maximum_step_risk is not self.risk_class:
             raise ValueError("plan risk_class must equal the highest step risk class")
+        if (
+            self.verification is not None
+            and self.verification.required_level is not self.verification_level
+        ):
+            raise ValueError("verification plan level must equal execution plan level")
         return self
 
 
@@ -169,6 +185,7 @@ class AdapterInvocation(RuntimeModel):
 class AdapterResult(RuntimeModel):
     output: dict[str, JsonValue] = Field(default_factory=dict)
     effect_reference: RuntimeIdentifier | None = None
+    execution_source: ExecutionSource | None = None
 
 
 class ApprovalDecision(RuntimeModel):
@@ -188,6 +205,7 @@ class StepOutput(RuntimeModel):
     step_id: RuntimeName
     output: dict[str, JsonValue] = Field(default_factory=dict)
     effect_reference: RuntimeIdentifier | None = None
+    execution_source: ExecutionSource | None = None
 
 
 class ExecutionSnapshot(RuntimeModel):
@@ -200,6 +218,7 @@ class ExecutionSnapshot(RuntimeModel):
     compensated_step_ids: tuple[RuntimeName, ...] = ()
     outputs: tuple[StepOutput, ...] = ()
     failure_code: RuntimeName | None = None
+    verification: VerificationReport | None = None
 
     @property
     def terminal(self) -> bool:

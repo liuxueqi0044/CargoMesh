@@ -33,8 +33,16 @@ Board 3 implements:
 - semantic locators, portal signatures, drift diagnostics, and bounded artifacts;
 - a synthetic logistics portal and browser-backed Adapter CI.
 
+Board 4 implements:
+
+- immutable evidence observations and append-only local receipts;
+- separately registered read-only evidence collectors;
+- deterministic claim matching and L0-L3 independence computation;
+- durable `VERIFYING`, `VERIFIED`, `NEEDS_REVIEW`, and `HALTED` outcomes;
+- a separate synthetic system-of-record service for cross-channel tests.
+
 It does not implement real carrier credentials/adapters, AI repair, route
-optimization, evidence verdicts, authentication/authorization, or a
+optimization, production authentication/authorization, or a
 horizontally-scaled SQL control plane yet.
 
 ## Dependency rules
@@ -49,6 +57,10 @@ horizontally-scaled SQL control plane yet.
 - Playwright imports are confined to `cargomesh.adapters.browser` and worker wiring.
 - Browser recipes may not contain raw CSS/XPath, coordinates, JavaScript, fixed sleeps,
   file upload, credential values, or absolute navigation URLs.
+- `cargomesh.verification.models` and `cargomesh.verification.engine` are pure;
+  they must not import Temporal, FastAPI, Playwright, HTTP clients, or SQLite.
+- Evidence collectors and execution adapters use separate registries; one may not
+  be silently substituted for the other.
 - `cargomesh.api` may depend on IR, mapping, and standards public interfaces.
 - Tests must not require internet access. Network synchronization is tested through injected transports or local fixtures.
 

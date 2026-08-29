@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from cargomesh.runtime.adapters import AdapterExecutionError
 from cargomesh.runtime.models import AdapterInvocation, AdapterResult
+from cargomesh.verification.models import EvidenceChannel, ExecutionSource
 
 from .artifacts import ArtifactDescriptor, ArtifactSink
 from .contracts import (
@@ -284,7 +285,14 @@ class PlaywrightBrowserAdapter:
                     "portal_signature_digest": signature_digest,
                     "synthetic": self._package.manifest.name.startswith("synthetic."),
                     "data": outputs,
-                }
+                },
+                execution_source=ExecutionSource(
+                    source_system=self._package.manifest.source_system,
+                    channel=EvidenceChannel.BROWSER,
+                    adapter_id=self._package.manifest.name,
+                    collection_id=_execution_collection_id(invocation),
+                    synthetic=self._package.manifest.name.startswith("synthetic."),
+                ),
             )
         except PortalDriftError as exc:
             descriptor, trace_stopped = await self._failure_trace(context, trace_started)
@@ -510,6 +518,14 @@ async def _visible_unique(page: Page, spec: LocatorSpec, timeout: int) -> Locato
 
 def _normalize_text(value: str) -> str:
     return " ".join(value.split())
+
+
+def _execution_collection_id(invocation: AdapterInvocation) -> str:
+    canonical = (
+        f"{invocation.tenant_id}\0{invocation.transaction_id}\0"
+        f"{invocation.step_id}\0{invocation.adapter}"
+    ).encode()
+    return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 
 def _adapter_error(

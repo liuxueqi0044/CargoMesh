@@ -18,6 +18,7 @@ def test_check_builtin_emits_deterministic_json(capsys: pytest.CaptureFixture[st
         "name": "synthetic.browser.track",
         "operations": ["fetch"],
         "portal_version": "synthetic-portal/v1",
+        "source_system": "synthetic.portal",
         "status": "ok",
         "version": "0.1.0",
     }

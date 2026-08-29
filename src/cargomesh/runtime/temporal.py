@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import re
 from datetime import timedelta
+from typing import cast
 
+from pydantic import JsonValue
 from temporalio import workflow
 from temporalio.client import Client
 from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
@@ -27,6 +29,13 @@ with workflow.unsafe.imports_passed_through():
         StepOutput,
     )
     from cargomesh.runtime.state_machine import transition
+    from cargomesh.verification.activities import VERIFY_TRANSACTION_ACTIVITY
+    from cargomesh.verification.models import (
+        VerificationInvocation,
+        VerificationPlan,
+        VerificationReport,
+        VerificationVerdict,
+    )
 
 
 def _temporal_retry_policy(step: ExecutionStep) -> RetryPolicy:
@@ -53,6 +62,16 @@ def _activity_failure_code(error: ActivityError) -> str:
         ):
             return error_type
     return "activity_failed"
+
+
+def _verification_retry_policy(plan: VerificationPlan) -> RetryPolicy:
+    spec = plan.retry
+    return RetryPolicy(
+        initial_interval=timedelta(seconds=spec.initial_interval_seconds),
+        backoff_coefficient=spec.backoff_coefficient,
+        maximum_interval=timedelta(seconds=spec.maximum_interval_seconds),
+        maximum_attempts=spec.maximum_attempts,
+    )
 
 
 @workflow.defn(name="CargoMeshTransactionWorkflow")
@@ -127,6 +146,7 @@ class CargoMeshTransactionWorkflow:
                         step_id=step.step_id,
                         output=result.output,
                         effect_reference=result.effect_reference,
+                        execution_source=result.execution_source,
                     ),
                 ),
             )
@@ -136,8 +156,66 @@ class CargoMeshTransactionWorkflow:
                 plan, completed_steps, ExecutionStatus.CANCELLED, "cancelled"
             )
         self._replace(current_step_id=None)
-        self._set_status(ExecutionStatus.EXECUTED_UNVERIFIED)
+        if plan.verification is None:
+            self._set_status(ExecutionStatus.EXECUTED_UNVERIFIED)
+            return self._require_snapshot()
+
+        self._set_status(ExecutionStatus.VERIFYING)
+        try:
+            report = await self._execute_verification(plan)
+        except ActivityError as error:
+            self._replace(failure_code=_activity_failure_code(error))
+            self._set_status(ExecutionStatus.HALTED)
+            return self._require_snapshot()
+        if (
+            report.transaction_id != plan.transaction_id
+            or report.business_digest != plan.business_digest
+            or report.required_level is not plan.verification_level
+        ):
+            self._replace(failure_code="verification_report_mismatch")
+            self._set_status(ExecutionStatus.HALTED)
+            return self._require_snapshot()
+        self._replace(verification=report)
+        if report.verdict is VerificationVerdict.VERIFIED:
+            self._set_status(ExecutionStatus.VERIFIED)
+        elif report.verdict is VerificationVerdict.NEEDS_REVIEW:
+            self._set_status(ExecutionStatus.NEEDS_REVIEW)
+        else:
+            self._set_status(ExecutionStatus.HALTED)
         return self._require_snapshot()
+
+    async def _execute_verification(self, plan: ExecutionPlan) -> VerificationReport:
+        verification = plan.verification
+        assert verification is not None
+        snapshot = self._require_snapshot()
+        transaction = plan.steps[0].input.get("transaction")
+        execution_document = cast(
+            dict[str, JsonValue],
+            {
+                "transaction": transaction,
+                "outputs": [output.model_dump(mode="json") for output in snapshot.outputs],
+            },
+        )
+        invocation = VerificationInvocation(
+            tenant_id=plan.tenant_id,
+            transaction_id=plan.transaction_id,
+            business_digest=plan.business_digest,
+            plan=verification,
+            execution_document=execution_document,
+            execution_sources=tuple(
+                output.execution_source
+                for output in snapshot.outputs
+                if output.execution_source is not None
+            ),
+        )
+        result = await workflow.execute_activity(
+            VERIFY_TRANSACTION_ACTIVITY,
+            invocation,
+            result_type=VerificationReport,
+            start_to_close_timeout=timedelta(seconds=verification.timeout_seconds),
+            retry_policy=_verification_retry_policy(verification),
+        )
+        return result  # type: ignore[no-any-return]
 
     async def _wait_for_approval(self, step: ExecutionStep) -> ApprovalDecision | None:
         self._replace(current_step_id=step.step_id, awaiting_approval_step_id=step.step_id)

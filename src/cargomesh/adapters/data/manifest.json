@@ -1,9 +1,10 @@
 {
-  "schema_version": "cargomesh.adapter-manifest/v1",
+  "schema_version": "cargomesh.adapter-manifest/v2",
   "name": "synthetic.browser.track",
+  "source_system": "synthetic.portal",
   "version": "0.1.0",
   "portal_version": "synthetic-portal/v1",
-  "minimum_cargomesh_version": "0.3.0",
+  "minimum_cargomesh_version": "0.4.0",
   "capabilities": [
     "shipment.track.read"
   ],

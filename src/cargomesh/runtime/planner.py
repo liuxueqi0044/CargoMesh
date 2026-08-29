@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import cast
 
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from cargomesh.ir import TransactionCommand
+from cargomesh.ir.enums import VerificationLevel
+from cargomesh.verification.models import (
+    EvidenceCollectionSpec,
+    VerificationClaimRule,
+    VerificationPlan,
+)
 
 from .models import ExecutionPlan, ExecutionStep, RetryPolicySpec, RuntimeName
 
@@ -34,8 +40,15 @@ class MissingCapabilityBinding(ValueError):
 class StaticExecutionPlanner:
     """Build a stable, ordered plan from explicit capability bindings."""
 
-    def __init__(self, bindings: Mapping[str, CapabilityBinding]) -> None:
+    def __init__(
+        self,
+        bindings: Mapping[str, CapabilityBinding],
+        *,
+        verification_factory: Callable[[TransactionCommand], VerificationPlan | None]
+        | None = None,
+    ) -> None:
         self._bindings = dict(bindings)
+        self._verification_factory = verification_factory
 
     def build(
         self,
@@ -80,6 +93,11 @@ class StaticExecutionPlanner:
             risk_class=command.risk_class,
             verification_level=command.verification_requirements.minimum_independence_level,
             steps=tuple(steps),
+            verification=(
+                self._verification_factory(command)
+                if self._verification_factory is not None
+                else None
+            ),
         )
 
 
@@ -104,4 +122,49 @@ def synthetic_browser_tracking_planner() -> StaticExecutionPlanner:
                 adapter="synthetic.browser.track", operation="fetch"
             )
         }
+    )
+
+
+def synthetic_verified_browser_tracking_planner() -> StaticExecutionPlanner:
+    """Bind Board 3 execution to Board 4's separate synthetic ledger verifier."""
+
+    return StaticExecutionPlanner(
+        {
+            "shipment.track.read": CapabilityBinding(
+                adapter="synthetic.browser.track", operation="fetch"
+            )
+        },
+        verification_factory=_synthetic_tracking_verification,
+    )
+
+
+def _synthetic_tracking_verification(command: TransactionCommand) -> VerificationPlan | None:
+    if (
+        command.verification_requirements.minimum_independence_level
+        is VerificationLevel.L0
+    ):
+        return None
+    reference = command.subject.carrier_booking_reference
+    if reference is None:
+        raise MissingCapabilityBinding("verification.shipment.carrier_booking_reference")
+    return VerificationPlan(
+        required_level=command.verification_requirements.minimum_independence_level,
+        collectors=(
+            EvidenceCollectionSpec(
+                step_id="collect-synthetic-ledger",
+                collector_id="synthetic.evidence.track",
+                operation="fetch",
+                input={"carrier_booking_reference": reference},
+            ),
+        ),
+        claim_rules=(
+            VerificationClaimRule(
+                claim="shipment.reference",
+                expected_pointer="/transaction/subject/carrier_booking_reference",
+            ),
+            VerificationClaimRule(
+                claim="shipment.status",
+                expected_pointer="/outputs/0/output/data/shipment.status",
+            ),
+        ),
     )

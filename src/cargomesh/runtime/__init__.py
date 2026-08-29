@@ -19,6 +19,7 @@ from .planner import (
     StaticExecutionPlanner,
     synthetic_browser_tracking_planner,
     synthetic_tracking_planner,
+    synthetic_verified_browser_tracking_planner,
 )
 from .state_machine import InvalidExecutionTransition, transition
 
@@ -40,5 +41,6 @@ __all__ = [
     "StepOutput",
     "synthetic_browser_tracking_planner",
     "synthetic_tracking_planner",
+    "synthetic_verified_browser_tracking_planner",
     "transition",
 ]

@@ -32,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
             "name": package.manifest.name,
             "operations": sorted(package.recipes),
             "portal_version": package.manifest.portal_version,
+            "source_system": package.manifest.source_system,
             "status": "ok",
             "version": package.manifest.version,
         }

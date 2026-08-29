@@ -3,11 +3,13 @@ from __future__ import annotations
 import pytest
 
 from cargomesh.ir import ShipmentSubject, TransactionCommand
+from cargomesh.ir.enums import VerificationLevel
 from cargomesh.runtime import (
     CapabilityBinding,
     MissingCapabilityBinding,
     StaticExecutionPlanner,
     synthetic_browser_tracking_planner,
+    synthetic_verified_browser_tracking_planner,
 )
 
 
@@ -54,3 +56,20 @@ def test_board_3_browser_binding_preserves_the_ir_input_shape() -> None:
     assert plan.steps[0].adapter == "synthetic.browser.track"
     assert plan.steps[0].operation == "fetch"
     assert plan.steps[0].input["transaction"]["subject"]["carrier_booking_reference"] == "CBR-1"
+
+
+def test_board_4_binding_adds_separate_ledger_verification() -> None:
+    plan = synthetic_verified_browser_tracking_planner().build(
+        command(), transaction_id="txn-1", business_digest="sha256:" + "a" * 64
+    )
+
+    assert plan.verification is not None
+    assert plan.verification.required_level is VerificationLevel.L1
+    assert plan.verification.collectors[0].collector_id == "synthetic.evidence.track"
+    assert plan.verification.collectors[0].input == {
+        "carrier_booking_reference": "CBR-1"
+    }
+    assert {rule.claim for rule in plan.verification.claim_rules} == {
+        "shipment.reference",
+        "shipment.status",
+    }

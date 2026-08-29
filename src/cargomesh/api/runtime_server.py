@@ -14,6 +14,7 @@ from cargomesh.runtime.idempotency import SQLiteSubmissionStore
 from cargomesh.runtime.planner import (
     synthetic_browser_tracking_planner,
     synthetic_tracking_planner,
+    synthetic_verified_browser_tracking_planner,
 )
 from cargomesh.runtime.temporal import TemporalExecutionGateway, connect_temporal
 
@@ -48,17 +49,23 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="bind shipment.track.read to the Board 3 synthetic browser adapter",
     )
+    parser.add_argument(
+        "--enable-synthetic-verification-binding",
+        action="store_true",
+        help="attach the Board 4 independent synthetic ledger verification plan",
+    )
     return parser
 
 
 async def serve(args: argparse.Namespace) -> None:
     client = await connect_temporal(args.target, namespace=args.namespace)
     submissions = SQLiteSubmissionStore(args.database)
-    planner = (
-        synthetic_browser_tracking_planner()
-        if args.enable_synthetic_browser_binding
-        else synthetic_tracking_planner()
-    )
+    if args.enable_synthetic_verification_binding:
+        planner = synthetic_verified_browser_tracking_planner()
+    elif args.enable_synthetic_browser_binding:
+        planner = synthetic_browser_tracking_planner()
+    else:
+        planner = synthetic_tracking_planner()
     service = TransactionService(
         planner=planner,
         submissions=submissions,
@@ -81,5 +88,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         parser.error(
             "choose exactly one explicit local binding: --enable-synthetic-adapter-binding "
             "or --enable-synthetic-browser-binding"
+        )
+    if (
+        args.enable_synthetic_verification_binding
+        and not args.enable_synthetic_browser_binding
+    ):
+        parser.error(
+            "--enable-synthetic-verification-binding requires "
+            "--enable-synthetic-browser-binding"
         )
     asyncio.run(serve(args))

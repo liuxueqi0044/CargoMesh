@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -17,9 +18,25 @@ from cargomesh.runtime.models import (
     ExecutionStep,
 )
 from cargomesh.runtime.temporal import CargoMeshTransactionWorkflow
+from cargomesh.verification.activities import VERIFY_TRANSACTION_ACTIVITY
+from cargomesh.verification.models import (
+    ClaimOutcome,
+    ClaimResult,
+    EvidenceChannel,
+    EvidenceCollectionSpec,
+    EvidenceReceiptSummary,
+    VerificationClaimRule,
+    VerificationPlan,
+    VerificationReport,
+    VerificationVerdict,
+)
 
 
-def plan(*steps: ExecutionStep, risk: RiskClass = RiskClass.READ_ONLY) -> ExecutionPlan:
+def plan(
+    *steps: ExecutionStep,
+    risk: RiskClass = RiskClass.READ_ONLY,
+    verification: VerificationPlan | None = None,
+) -> ExecutionPlan:
     return ExecutionPlan(
         transaction_id="txn-1",
         tenant_id="tenant-a",
@@ -27,6 +44,7 @@ def plan(*steps: ExecutionStep, risk: RiskClass = RiskClass.READ_ONLY) -> Execut
         risk_class=risk,
         verification_level=VerificationLevel.L1,
         steps=steps,
+        verification=verification,
     )
 
 
@@ -183,3 +201,151 @@ def test_safe_adapter_failure_code_survives_the_activity_boundary() -> None:
 
     assert result.status is ExecutionStatus.HALTED
     assert result.failure_code == "portal_drift_detected"
+
+
+def verification_plan() -> VerificationPlan:
+    return VerificationPlan(
+        required_level=VerificationLevel.L1,
+        collectors=(
+            EvidenceCollectionSpec(
+                step_id="collect-ledger",
+                collector_id="test.collector",
+                operation="fetch",
+            ),
+        ),
+        claim_rules=(
+            VerificationClaimRule(
+                claim="shipment.status",
+                expected_pointer="/outputs/0/output/shipment.status",
+            ),
+        ),
+    )
+
+
+def verification_report(verdict: VerificationVerdict) -> VerificationReport:
+    outcome = {
+        VerificationVerdict.VERIFIED: ClaimOutcome.MATCH,
+        VerificationVerdict.NEEDS_REVIEW: ClaimOutcome.MISMATCH,
+        VerificationVerdict.HALTED: ClaimOutcome.MISSING,
+    }[verdict]
+    return VerificationReport.issue(
+        transaction_id="txn-1",
+        business_digest="sha256:" + "a" * 64,
+        verdict=verdict,
+        required_level=VerificationLevel.L1,
+        achieved_level=VerificationLevel.L1,
+        evaluated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        reasons=("test_verdict",),
+        claims=(
+            ClaimResult(
+                claim="shipment.status",
+                outcome=outcome,
+                expected="IN_TRANSIT",
+                observed=("IN_TRANSIT",),
+            ),
+        ),
+        evidence=(
+            EvidenceReceiptSummary(
+                evidence_id="evidence-1",
+                source_record_id="record-1",
+                source_system="synthetic.ledger",
+                channel=EvidenceChannel.SYSTEM_RECORD,
+                collector_id="test.collector",
+                collection_id="collection-1",
+                observed_at=datetime(2026, 1, 1, tzinfo=UTC),
+                content_digest="sha256:" + "b" * 64,
+            ),
+        ),
+    )
+
+
+def test_verification_report_controls_the_terminal_status() -> None:
+    async def invoke(activity_name: str, _invocation: object, **_options: object) -> object:
+        if activity_name == VERIFY_TRANSACTION_ACTIVITY:
+            return verification_report(VerificationVerdict.VERIFIED)
+        return AdapterResult(output={"shipment.status": "IN_TRANSIT"})
+
+    workflow_instance = CargoMeshTransactionWorkflow()
+    workflow_info = SimpleNamespace(workflow_id="wf-1")
+    with (
+        patch("cargomesh.runtime.temporal.workflow.info", return_value=workflow_info),
+        patch("cargomesh.runtime.temporal.workflow.execute_activity", side_effect=invoke),
+    ):
+        result = asyncio.run(
+            workflow_instance.run(
+                plan(step("read", "fetch"), verification=verification_plan())
+            )
+        )
+
+    assert result.status is ExecutionStatus.VERIFIED
+    assert result.verification is not None
+    assert result.verification.verdict is VerificationVerdict.VERIFIED
+
+
+def test_review_and_halted_reports_never_become_verified() -> None:
+    for verdict, expected_status in (
+        (VerificationVerdict.NEEDS_REVIEW, ExecutionStatus.NEEDS_REVIEW),
+        (VerificationVerdict.HALTED, ExecutionStatus.HALTED),
+    ):
+        calls = 0
+
+        async def invoke(
+            _activity_name: str,
+            _invocation: object,
+            report_verdict: VerificationVerdict = verdict,
+            **_options: object,
+        ) -> object:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return AdapterResult(output={"shipment.status": "IN_TRANSIT"})
+            return verification_report(report_verdict)
+
+        workflow_instance = CargoMeshTransactionWorkflow()
+        workflow_info = SimpleNamespace(workflow_id="wf-1")
+        with (
+            patch("cargomesh.runtime.temporal.workflow.info", return_value=workflow_info),
+            patch(
+                "cargomesh.runtime.temporal.workflow.execute_activity",
+                side_effect=invoke,
+            ),
+        ):
+            result = asyncio.run(
+                workflow_instance.run(
+                    plan(step("read", "fetch"), verification=verification_plan())
+                )
+            )
+
+        assert result.status is expected_status
+        assert result.status is not ExecutionStatus.VERIFIED
+
+
+def test_workflow_rejects_a_report_bound_to_another_transaction() -> None:
+    calls = 0
+
+    async def invoke(
+        _activity_name: str, _invocation: object, **_options: object
+    ) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return AdapterResult(output={"shipment.status": "IN_TRANSIT"})
+        return verification_report(VerificationVerdict.VERIFIED).model_copy(
+            update={"transaction_id": "another-transaction"}
+        )
+
+    workflow_instance = CargoMeshTransactionWorkflow()
+    workflow_info = SimpleNamespace(workflow_id="wf-1")
+    with (
+        patch("cargomesh.runtime.temporal.workflow.info", return_value=workflow_info),
+        patch("cargomesh.runtime.temporal.workflow.execute_activity", side_effect=invoke),
+    ):
+        result = asyncio.run(
+            workflow_instance.run(
+                plan(step("read", "fetch"), verification=verification_plan())
+            )
+        )
+
+    assert result.status is ExecutionStatus.HALTED
+    assert result.failure_code == "verification_report_mismatch"
+    assert result.verification is None

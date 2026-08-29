@@ -10,8 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 from cargomesh.ir.enums import RiskClass
 from cargomesh.runtime.models import RuntimeName
 
-ADAPTER_MANIFEST_SCHEMA_VERSION: Final[Literal["cargomesh.adapter-manifest/v1"]] = (
-    "cargomesh.adapter-manifest/v1"
+ADAPTER_MANIFEST_SCHEMA_VERSION: Final[Literal["cargomesh.adapter-manifest/v2"]] = (
+    "cargomesh.adapter-manifest/v2"
 )
 BROWSER_RECIPE_SCHEMA_VERSION: Final[Literal["cargomesh.browser-recipe/v1"]] = (
     "cargomesh.browser-recipe/v1"
@@ -197,8 +197,9 @@ class RecipeReference(AdapterContractModel):
 
 
 class AdapterManifest(AdapterContractModel):
-    schema_version: Literal["cargomesh.adapter-manifest/v1"] = ADAPTER_MANIFEST_SCHEMA_VERSION
+    schema_version: Literal["cargomesh.adapter-manifest/v2"] = ADAPTER_MANIFEST_SCHEMA_VERSION
     name: RuntimeName
+    source_system: RuntimeName
     version: SemVer
     portal_version: BoundedText
     minimum_cargomesh_version: SemVer
