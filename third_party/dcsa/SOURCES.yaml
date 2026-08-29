@@ -1,0 +1,37 @@
+schema_version: cargomesh.sources/v1
+sources:
+  - path: tnt/v2/tnt_v2.3.0.yaml
+    source_path: tnt/v2/tnt_v2.3.0.yaml
+    url: https://raw.githubusercontent.com/dcsaorg/DCSA-OpenAPI/7767437e7a752437538786e64f2734c95b513d52/tnt/v2/tnt_v2.3.0.yaml
+    sha256: 62107a99a37732052fefb42c6ba2e69f2496cac53b16e77f4beaf98800b7404a
+    repository: https://github.com/dcsaorg/DCSA-OpenAPI.git
+    commit: 7767437e7a752437538786e64f2734c95b513d52
+    license: Apache-2.0
+  - path: LICENSE
+    source_path: LICENSE
+    url: https://raw.githubusercontent.com/dcsaorg/DCSA-OpenAPI/7767437e7a752437538786e64f2734c95b513d52/LICENSE
+    sha256: 1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6
+    repository: https://github.com/dcsaorg/DCSA-OpenAPI.git
+    commit: 7767437e7a752437538786e64f2734c95b513d52
+    license: Apache-2.0
+  - path: domain/event/event_domain_v2.0.0.yaml
+    source_path: domain/event/event_domain_v2.0.0.yaml
+    url: https://raw.githubusercontent.com/dcsaorg/DCSA-OpenAPI/7767437e7a752437538786e64f2734c95b513d52/domain/event/event_domain_v2.0.0.yaml
+    sha256: 409b73b24812de200b1dd8e9dfbd1d4c16b81e3c5f15f8c276b86abdffd682cc
+    repository: https://github.com/dcsaorg/DCSA-OpenAPI.git
+    commit: 7767437e7a752437538786e64f2734c95b513d52
+    license: Apache-2.0
+  - path: domain/dcsa/dcsa_domain_v2.0.0.yaml
+    source_path: domain/dcsa/dcsa_domain_v2.0.0.yaml
+    url: https://raw.githubusercontent.com/dcsaorg/DCSA-OpenAPI/7767437e7a752437538786e64f2734c95b513d52/domain/dcsa/dcsa_domain_v2.0.0.yaml
+    sha256: b9ea67d2c7fd16d2e981a8bcf867a0de64c62ef25b1d8b16f0ffb68db615c6b0
+    repository: https://github.com/dcsaorg/DCSA-OpenAPI.git
+    commit: 7767437e7a752437538786e64f2734c95b513d52
+    license: Apache-2.0
+  - path: domain/error/error_domain_v1.0.0.yaml
+    source_path: domain/error/error_domain_v1.0.0.yaml
+    url: https://raw.githubusercontent.com/dcsaorg/DCSA-OpenAPI/7767437e7a752437538786e64f2734c95b513d52/domain/error/error_domain_v1.0.0.yaml
+    sha256: 23bec86a2063daaff098146ecb1e2c198c7557e42aff16170c8ae03df6f24913
+    repository: https://github.com/dcsaorg/DCSA-OpenAPI.git
+    commit: 7767437e7a752437538786e64f2734c95b513d52
+    license: Apache-2.0

@@ -1,0 +1,4 @@
+namespace,code,name,aliases,version,valid_from,valid_to
+dcsa.tnt.event_type,SHIPMENT,Shipment event,shipment|shipment event,2.3.0,,
+dcsa.tnt.event_type,TRANSPORT,Transport event,transport|transport event,2.3.0,,
+dcsa.tnt.event_type,EQUIPMENT,Equipment event,equipment|equipment event,2.3.0,,

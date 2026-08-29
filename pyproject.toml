@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cargomesh"
+version = "0.1.0"
+description = "CargoMesh business transaction compiler for container logistics"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+license-files = ["third_party/dcsa/LICENSE", "NOTICE"]
+authors = [{ name = "liuxueqi0044" }]
+dependencies = [
+  "fastapi>=0.115,<1",
+  "pydantic>=2.11,<3",
+  "pyyaml>=6.0,<7",
+  "uvicorn>=0.34,<1",
+]
+
+[dependency-groups]
+dev = [
+  "httpx2>=2.0,<3",
+  "mypy>=1.15,<2",
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<8",
+  "ruff>=0.11,<1",
+]
+
+[project.scripts]
+cargomesh-api = "cargomesh.api.main:run"
+cargomesh-dcsa = "cargomesh.standards.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cargomesh"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"third_party/dcsa" = "cargomesh/standards/vendor/dcsa"
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers --disable-warnings"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["cargomesh"]
+
+[[tool.mypy.overrides]]
+module = "yaml"
+ignore_missing_imports = true

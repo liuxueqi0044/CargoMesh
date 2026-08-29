@@ -1,0 +1,14 @@
+* text=auto
+
+.gitattributes text eol=lf
+.gitignore text eol=lf
+*.csv text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.lock text eol=lf
+
+# These files are checksum-pinned upstream bytes. Never rewrite line endings.
+third_party/dcsa/** text eol=lf
