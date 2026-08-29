@@ -10,7 +10,7 @@ sources:
   - path: LICENSE
     source_path: LICENSE
     url: https://raw.githubusercontent.com/dcsaorg/DCSA-OpenAPI/7767437e7a752437538786e64f2734c95b513d52/LICENSE
-    sha256: 1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6
+    sha256: c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4
     repository: https://github.com/dcsaorg/DCSA-OpenAPI.git
     commit: 7767437e7a752437538786e64f2734c95b513d52
     license: Apache-2.0
@@ -24,14 +24,14 @@ sources:
   - path: domain/dcsa/dcsa_domain_v2.0.0.yaml
     source_path: domain/dcsa/dcsa_domain_v2.0.0.yaml
     url: https://raw.githubusercontent.com/dcsaorg/DCSA-OpenAPI/7767437e7a752437538786e64f2734c95b513d52/domain/dcsa/dcsa_domain_v2.0.0.yaml
-    sha256: b9ea67d2c7fd16d2e981a8bcf867a0de64c62ef25b1d8b16f0ffb68db615c6b0
+    sha256: 882e0d38729e5c2500a4aa3a086129d7dfb44034706527e415bee2618d5fd846
     repository: https://github.com/dcsaorg/DCSA-OpenAPI.git
     commit: 7767437e7a752437538786e64f2734c95b513d52
     license: Apache-2.0
   - path: domain/error/error_domain_v1.0.0.yaml
     source_path: domain/error/error_domain_v1.0.0.yaml
     url: https://raw.githubusercontent.com/dcsaorg/DCSA-OpenAPI/7767437e7a752437538786e64f2734c95b513d52/domain/error/error_domain_v1.0.0.yaml
-    sha256: 23bec86a2063daaff098146ecb1e2c198c7557e42aff16170c8ae03df6f24913
+    sha256: 688bd4fae0001ac786faacccf75a47d0ac1d9f527a95c44c88f399b669fe456f
     repository: https://github.com/dcsaorg/DCSA-OpenAPI.git
     commit: 7767437e7a752437538786e64f2734c95b513d52
     license: Apache-2.0

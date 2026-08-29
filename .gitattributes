@@ -10,5 +10,6 @@
 *.yml text eol=lf
 *.lock text eol=lf
 
-# These files are checksum-pinned upstream bytes. Never rewrite line endings.
-third_party/dcsa/** text eol=lf
+# These files are checksum-pinned upstream bytes with mixed line endings.
+# Treat them as opaque so Git never rewrites their byte representation.
+third_party/dcsa/** -text
