@@ -9,6 +9,8 @@ Board 3 executes checksum-pinned, read-only browser recipes in isolated
 Playwright contexts and stops on portal drift.
 Board 4 collects separately sourced evidence, persists immutable receipts, and
 produces deterministic, digest-protected verification reports.
+Board 5 selects among API, EDI, browser, and attended paths using digest-bound
+policy, outcome-derived health, integer scoring, and audited read-only fallback.
 
 Execution without a configured verifier remains deliberately named
 `EXECUTED_UNVERIFIED`. Only a separate evidence collector can produce
@@ -39,11 +41,15 @@ evidence becomes `HALTED`.
 | Verification engine | Pure claim matching and computed L0–L3 cross-channel independence |
 | Evidence receipts | Tenant-scoped append-only SQLite store with idempotent replay and conflict detection |
 | Evidence channel | Separate bounded HTTP collector and synthetic system-of-record fault service |
+| Route optimizer | Immutable candidate/policy contracts, hard gates, integer scoring and deterministic ties |
+| Route health | Append-only tenant-scoped outcomes, rolling p95/success metrics and cooldown circuits |
+| Safe fallback | Workflow-frozen alternatives; read-only and explicit safe error codes only |
+| Synthetic API path | Strict bounded HTTP adapter plus healthy and controlled-fault local service |
 
 The first accepted capability remains `shipment.track.read`. Board 3 supplies a
-synthetic browser adapter, not a real carrier integration. Route optimization,
-production authentication/authorization and a distributed control-plane
-database belong to later boards.
+synthetic API and browser adapters, not real carrier integrations. Production
+authentication/authorization, EDI/human executors, and a distributed
+control-plane database belong to later boards.
 
 ## Quick start
 
@@ -183,6 +189,38 @@ system differs from execution. It is still synthetic and does not confirm a real
 carrier transaction. Use `cargomesh-synthetic-evidence --variant conflict`,
 `missing`, `stale`, or `server_error` to exercise fail-closed paths.
 
+### Board 5 optimized dual path
+
+Board 5 adds a separate synthetic tracking API on port 8767. With Temporal
+running, start these processes in separate terminals:
+
+```powershell
+uv run cargomesh-synthetic-portal
+uv run cargomesh-synthetic-api
+uv run cargomesh-synthetic-evidence
+uv run cargomesh-worker --enable-synthetic-api-adapter --enable-synthetic-browser-adapter --enable-synthetic-verifier --enable-routing-outcomes
+uv run cargomesh-runtime-api --enable-synthetic-optimized-binding
+```
+
+The API and runtime default to `cargomesh-routing.sqlite3`; configure both with
+`CARGOMESH_ROUTING_DATABASE` or `--routing-database`. A new transaction freezes
+the policy digest, health snapshot, component scores, ranking, chosen path, and
+safe fallback order before Temporal starts. Empty or healthy history selects
+`synthetic.api.track`. Three recent consecutive API failures open its local
+circuit and make the next plan select `synthetic.browser.track`.
+
+Automatic fall-through is deliberately narrow: the step must be `READ_ONLY`,
+the failing candidate must list the bounded ApplicationError code, and the next
+candidate must already be present in the frozen decision. Effectful work and
+unknown errors halt instead of guessing whether a write occurred. Every real
+Activity attempt records only route identity, outcome, safe error code, and
+latency—never transaction input or adapter output.
+
+Use `cargomesh-synthetic-api --variant server_error`, `malformed`, or
+`not_found` to exercise fallback and fail-closed response validation. Board 4's
+separate `synthetic.ledger` collector can verify either execution path and can
+reach L2 when the submitted IR requires L2.
+
 Submit a compiled IR or DCSA TNT source using the same body accepted by the
 compiler endpoint:
 
@@ -219,6 +257,7 @@ src/cargomesh/
 ├─ application/     compile and reference-data use cases
 ├─ ir/              Transaction IR, canonicalization and migrations
 ├─ mapping/         DCSA TNT mapper, diagnostics and registry
+├─ routing/         execution candidates, policy ranking, outcomes and circuit health
 ├─ runtime/         plans, state machine, idempotency, Temporal and adapter boundary
 ├─ standards/       source integrity, compatibility and reference data
 └─ verification/    evidence collectors, receipts and deterministic verdict engine

@@ -12,7 +12,12 @@ from temporalio.worker import Worker
 
 from cargomesh.adapters.artifacts import FileArtifactSink
 from cargomesh.adapters.browser import BrowserAdapterConfig, PlaywrightBrowserAdapter
+from cargomesh.adapters.http_api import (
+    SyntheticTrackingHttpAdapter,
+    SyntheticTrackingHttpAdapterConfig,
+)
 from cargomesh.adapters.package import load_builtin_synthetic_package
+from cargomesh.routing.store import SQLiteRouteOutcomeStore
 from cargomesh.verification.activities import VerificationActivities
 from cargomesh.verification.collectors import EvidenceCollectorRegistry
 from cargomesh.verification.http_collector import (
@@ -53,6 +58,29 @@ def _parser() -> argparse.ArgumentParser:
         help="origin of the local synthetic portal",
     )
     parser.add_argument(
+        "--enable-synthetic-api-adapter",
+        action="store_true",
+        help="enable the strict Board 5 local synthetic tracking API adapter",
+    )
+    parser.add_argument(
+        "--synthetic-api-url",
+        default=os.environ.get("CARGOMESH_SYNTHETIC_API_URL", "http://127.0.0.1:8767"),
+        help="origin of the local synthetic tracking API",
+    )
+    parser.add_argument(
+        "--enable-routing-outcomes",
+        action="store_true",
+        help="persist Board 5 route outcomes for health scoring and circuit breaking",
+    )
+    parser.add_argument(
+        "--routing-database",
+        type=Path,
+        default=Path(
+            os.environ.get("CARGOMESH_ROUTING_DATABASE", "cargomesh-routing.sqlite3")
+        ),
+        help="append-only SQLite route outcome database",
+    )
+    parser.add_argument(
         "--browser-trace-directory",
         type=Path,
         default=None,
@@ -87,6 +115,10 @@ async def run_worker(
     enable_synthetic_adapter: bool,
     enable_synthetic_browser_adapter: bool = False,
     synthetic_portal_url: str = "http://127.0.0.1:8765",
+    enable_synthetic_api_adapter: bool = False,
+    synthetic_api_url: str = "http://127.0.0.1:8767",
+    enable_routing_outcomes: bool = False,
+    routing_database: Path | str = "cargomesh-routing.sqlite3",
     browser_trace_directory: Path | None = None,
     enable_synthetic_verifier: bool = False,
     synthetic_evidence_url: str = "http://127.0.0.1:8766",
@@ -104,10 +136,20 @@ async def run_worker(
     evidence_store = SQLiteEvidenceStore(
         evidence_database if enable_synthetic_verifier else ":memory:"
     )
+    outcome_store = (
+        SQLiteRouteOutcomeStore(routing_database) if enable_routing_outcomes else None
+    )
     browser_adapter: PlaywrightBrowserAdapter | None = None
     try:
         if enable_synthetic_adapter:
             registry.register("synthetic.track", SyntheticTrackingAdapter())
+        if enable_synthetic_api_adapter:
+            registry.register(
+                "synthetic.api.track",
+                SyntheticTrackingHttpAdapter(
+                    SyntheticTrackingHttpAdapterConfig(synthetic_api_url)
+                ),
+            )
         if enable_synthetic_browser_adapter:
             artifact_sink = (
                 FileArtifactSink(browser_trace_directory)
@@ -125,7 +167,10 @@ async def run_worker(
             )
             await browser_adapter.start()
             registry.register(package.manifest.name, browser_adapter)
-        activities = AdapterActivities(registry)
+        activities = AdapterActivities(
+            registry,
+            outcome_store=outcome_store,
+        )
         verification_activities = VerificationActivities(
             evidence_collectors, evidence_store
         )
@@ -141,6 +186,8 @@ async def run_worker(
         if browser_adapter is not None:
             await browser_adapter.close()
         evidence_store.close()
+        if outcome_store is not None:
+            outcome_store.close()
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -153,6 +200,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             enable_synthetic_adapter=args.enable_synthetic_adapter,
             enable_synthetic_browser_adapter=args.enable_synthetic_browser_adapter,
             synthetic_portal_url=args.synthetic_portal_url,
+            enable_synthetic_api_adapter=args.enable_synthetic_api_adapter,
+            synthetic_api_url=args.synthetic_api_url,
+            enable_routing_outcomes=args.enable_routing_outcomes,
+            routing_database=args.routing_database,
             browser_trace_directory=args.browser_trace_directory,
             enable_synthetic_verifier=args.enable_synthetic_verifier,
             synthetic_evidence_url=args.synthetic_evidence_url,

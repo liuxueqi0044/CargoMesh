@@ -9,6 +9,7 @@ from typing import Annotated, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, model_validator
 
 from cargomesh.ir.enums import RiskClass, VerificationLevel
+from cargomesh.routing.models import RouteAttemptStatus, RouteDecision
 from cargomesh.verification.models import (
     ExecutionSource,
     VerificationPlan,
@@ -99,6 +100,25 @@ class CompensationSpec(RuntimeModel):
     retry: RetryPolicySpec = Field(default_factory=RetryPolicySpec)
 
 
+class RouteFallbackSpec(RuntimeModel):
+    """A pre-ranked, read-only fallback frozen into Workflow history."""
+
+    candidate_id: RuntimeName
+    adapter: RuntimeName
+    operation: RuntimeName
+    timeout_seconds: int = Field(default=60, ge=1, le=86400)
+    retry: RetryPolicySpec = Field(default_factory=RetryPolicySpec)
+    fallback_on_error_codes: tuple[RuntimeName, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_fallback(self) -> RouteFallbackSpec:
+        if len(self.fallback_on_error_codes) != len(
+            set(self.fallback_on_error_codes)
+        ):
+            raise ValueError("fallback error codes must not contain duplicates")
+        return self
+
+
 class ExecutionStep(RuntimeModel):
     step_id: RuntimeName
     capability: RuntimeName
@@ -112,6 +132,9 @@ class ExecutionStep(RuntimeModel):
     requires_approval: bool = False
     approval_timeout_seconds: int | None = Field(default=None, ge=1, le=604800)
     compensation: CompensationSpec | None = None
+    route_candidate_id: RuntimeName | None = None
+    fallback_on_error_codes: tuple[RuntimeName, ...] = ()
+    route_fallbacks: tuple[RouteFallbackSpec, ...] = ()
 
     @model_validator(mode="after")
     def validate_step(self) -> ExecutionStep:
@@ -123,6 +146,21 @@ class ExecutionStep(RuntimeModel):
             raise ValueError("approval timeout requires an approval boundary")
         if self.risk_class is RiskClass.READ_ONLY and self.compensation is not None:
             raise ValueError("read-only execution steps must not declare compensation")
+        if len(self.fallback_on_error_codes) != len(
+            set(self.fallback_on_error_codes)
+        ):
+            raise ValueError("fallback error codes must not contain duplicates")
+        if self.route_candidate_id is None and (
+            self.fallback_on_error_codes or self.route_fallbacks
+        ):
+            raise ValueError("route fallback metadata requires a selected candidate")
+        if self.route_fallbacks and self.risk_class is not RiskClass.READ_ONLY:
+            raise ValueError("automatic route fallback is restricted to read-only steps")
+        fallback_ids = [item.candidate_id for item in self.route_fallbacks]
+        if len(fallback_ids) != len(set(fallback_ids)):
+            raise ValueError("route fallback candidate ids must be unique")
+        if self.route_candidate_id in fallback_ids:
+            raise ValueError("selected route cannot also be a fallback")
         _reject_secret_values(self.input)
         if self.compensation is not None:
             _reject_secret_values(self.compensation.input)
@@ -138,6 +176,7 @@ class ExecutionPlan(RuntimeModel):
     verification_level: VerificationLevel
     steps: tuple[ExecutionStep, ...]
     verification: VerificationPlan | None = None
+    routing_decisions: tuple[RouteDecision, ...] = ()
 
     @model_validator(mode="after")
     def validate_plan(self) -> ExecutionPlan:
@@ -170,6 +209,18 @@ class ExecutionPlan(RuntimeModel):
             and self.verification.required_level is not self.verification_level
         ):
             raise ValueError("verification plan level must equal execution plan level")
+        routed_steps = [step for step in self.steps if step.route_candidate_id is not None]
+        if len(routed_steps) != len(self.routing_decisions):
+            raise ValueError("each routed step requires exactly one frozen route decision")
+        for step, decision in zip(routed_steps, self.routing_decisions, strict=True):
+            if (
+                decision.request.tenant_id != self.tenant_id
+                or decision.request.capability != step.capability
+                or decision.selected_candidate_id != step.route_candidate_id
+                or decision.fallback_candidate_ids
+                != tuple(item.candidate_id for item in step.route_fallbacks)
+            ):
+                raise ValueError("route decision does not match its execution step")
         return self
 
 
@@ -180,6 +231,7 @@ class AdapterInvocation(RuntimeModel):
     adapter: RuntimeName
     operation: RuntimeName
     input: dict[str, JsonValue]
+    route_candidate_id: RuntimeName | None = None
 
 
 class AdapterResult(RuntimeModel):
@@ -208,6 +260,22 @@ class StepOutput(RuntimeModel):
     execution_source: ExecutionSource | None = None
 
 
+class RouteAttempt(RuntimeModel):
+    step_id: RuntimeName
+    candidate_id: RuntimeName
+    adapter: RuntimeName
+    status: RouteAttemptStatus
+    failure_code: RuntimeName | None = None
+
+    @model_validator(mode="after")
+    def validate_attempt(self) -> RouteAttempt:
+        if self.status is RouteAttemptStatus.SUCCEEDED and self.failure_code is not None:
+            raise ValueError("successful route attempt must not include a failure code")
+        if self.status is RouteAttemptStatus.FAILED and self.failure_code is None:
+            raise ValueError("failed route attempt requires a failure code")
+        return self
+
+
 class ExecutionSnapshot(RuntimeModel):
     transaction_id: RuntimeIdentifier
     workflow_id: RuntimeIdentifier
@@ -219,6 +287,8 @@ class ExecutionSnapshot(RuntimeModel):
     outputs: tuple[StepOutput, ...] = ()
     failure_code: RuntimeName | None = None
     verification: VerificationReport | None = None
+    routing_decisions: tuple[RouteDecision, ...] = ()
+    route_attempts: tuple[RouteAttempt, ...] = ()
 
     @property
     def terminal(self) -> bool:

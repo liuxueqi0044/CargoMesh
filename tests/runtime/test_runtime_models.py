@@ -10,6 +10,7 @@ from cargomesh.runtime import (
     ExecutionStatus,
     ExecutionStep,
     InvalidExecutionTransition,
+    RouteFallbackSpec,
     transition,
 )
 
@@ -65,6 +66,26 @@ def test_read_only_plan_rejects_compensation() -> None:
                     adapter="synthetic.track", operation="undo"
                 ),
             )
+        )
+
+
+def test_effectful_step_rejects_automatic_route_fallback() -> None:
+    with pytest.raises(ValidationError, match="restricted to read-only"):
+        ExecutionStep(
+            step_id="write",
+            capability="booking.create",
+            adapter="carrier.api",
+            operation="create",
+            risk_class=RiskClass.REVERSIBLE_WRITE,
+            route_candidate_id="carrier.api",
+            fallback_on_error_codes=("api_timeout",),
+            route_fallbacks=(
+                RouteFallbackSpec(
+                    candidate_id="carrier.browser",
+                    adapter="carrier.browser",
+                    operation="create",
+                ),
+            ),
         )
 
 

@@ -9,10 +9,12 @@ from collections.abc import Sequence
 
 import uvicorn
 
-from cargomesh.application.transactions import TransactionService
+from cargomesh.application.transactions import ExecutionPlanner, TransactionService
+from cargomesh.routing.store import SQLiteRouteOutcomeStore
 from cargomesh.runtime.idempotency import SQLiteSubmissionStore
 from cargomesh.runtime.planner import (
     synthetic_browser_tracking_planner,
+    synthetic_optimized_tracking_planner,
     synthetic_tracking_planner,
     synthetic_verified_browser_tracking_planner,
 )
@@ -54,13 +56,28 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="attach the Board 4 independent synthetic ledger verification plan",
     )
+    parser.add_argument(
+        "--enable-synthetic-optimized-binding",
+        action="store_true",
+        help="enable Board 5 policy-ranked API execution with safe browser fallback",
+    )
+    parser.add_argument(
+        "--routing-database",
+        default=os.environ.get("CARGOMESH_ROUTING_DATABASE", "cargomesh-routing.sqlite3"),
+        help="route outcome database shared with the worker",
+    )
     return parser
 
 
 async def serve(args: argparse.Namespace) -> None:
     client = await connect_temporal(args.target, namespace=args.namespace)
     submissions = SQLiteSubmissionStore(args.database)
-    if args.enable_synthetic_verification_binding:
+    routing_store: SQLiteRouteOutcomeStore | None = None
+    planner: ExecutionPlanner
+    if args.enable_synthetic_optimized_binding:
+        routing_store = SQLiteRouteOutcomeStore(args.routing_database)
+        planner = synthetic_optimized_tracking_planner(routing_store)
+    elif args.enable_synthetic_verification_binding:
         planner = synthetic_verified_browser_tracking_planner()
     elif args.enable_synthetic_browser_binding:
         planner = synthetic_browser_tracking_planner()
@@ -79,15 +96,24 @@ async def serve(args: argparse.Namespace) -> None:
         await server.serve()
     finally:
         submissions.close()
+        if routing_store is not None:
+            routing_store.close()
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
-    if args.enable_synthetic_adapter_binding == args.enable_synthetic_browser_binding:
+    binding_count = sum(
+        (
+            args.enable_synthetic_adapter_binding,
+            args.enable_synthetic_browser_binding,
+            args.enable_synthetic_optimized_binding,
+        )
+    )
+    if binding_count != 1:
         parser.error(
-            "choose exactly one explicit local binding: --enable-synthetic-adapter-binding "
-            "or --enable-synthetic-browser-binding"
+            "choose exactly one explicit local binding: --enable-synthetic-adapter-binding, "
+            "--enable-synthetic-browser-binding, or --enable-synthetic-optimized-binding"
         )
     if (
         args.enable_synthetic_verification_binding

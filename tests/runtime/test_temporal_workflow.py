@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock, patch
 
 from temporalio.exceptions import ActivityError, ApplicationError
 
+from cargomesh.ir import ShipmentSubject, TransactionCommand, VerificationRequirements
 from cargomesh.ir.enums import RiskClass, VerificationLevel
+from cargomesh.routing.models import RouteAttemptStatus
+from cargomesh.routing.store import SQLiteRouteOutcomeStore
 from cargomesh.runtime.models import (
     AdapterInvocation,
     AdapterResult,
@@ -17,6 +20,7 @@ from cargomesh.runtime.models import (
     ExecutionStatus,
     ExecutionStep,
 )
+from cargomesh.runtime.planner import synthetic_optimized_tracking_planner
 from cargomesh.runtime.temporal import CargoMeshTransactionWorkflow
 from cargomesh.verification.activities import VERIFY_TRANSACTION_ACTIVITY
 from cargomesh.verification.models import (
@@ -201,6 +205,85 @@ def test_safe_adapter_failure_code_survives_the_activity_boundary() -> None:
 
     assert result.status is ExecutionStatus.HALTED
     assert result.failure_code == "portal_drift_detected"
+
+
+def _activity_error(code: str) -> ActivityError:
+    error = ActivityError(
+        "failed",
+        scheduled_event_id=1,
+        started_event_id=2,
+        identity="test",
+        activity_type="adapter",
+        activity_id="read",
+        retry_state=None,
+    )
+    error.__cause__ = ApplicationError("safe failure", type=code, non_retryable=True)
+    return error
+
+
+def _optimized_plan() -> ExecutionPlan:
+    store = SQLiteRouteOutcomeStore()
+    try:
+        return synthetic_optimized_tracking_planner(store).build(
+            TransactionCommand(
+                tenant_id="tenant-a",
+                external_reference="customer-1",
+                subject=ShipmentSubject(carrier_booking_reference="CBR-001"),
+                verification_requirements=VerificationRequirements(
+                    minimum_independence_level=VerificationLevel.L0
+                ),
+            ),
+            transaction_id="txn-1",
+            business_digest="sha256:" + "a" * 64,
+        )
+    finally:
+        store.close()
+
+
+def test_read_only_route_uses_only_an_explicit_safe_fallback() -> None:
+    calls: list[AdapterInvocation] = []
+
+    async def invoke(
+        _activity_name: str, invocation: AdapterInvocation, **_options: object
+    ) -> AdapterResult:
+        calls.append(invocation)
+        if len(calls) == 1:
+            raise _activity_error("api_server_error")
+        return AdapterResult(output={"data": {}})
+
+    workflow_instance = CargoMeshTransactionWorkflow()
+    workflow_info = SimpleNamespace(workflow_id="wf-1")
+    with (
+        patch("cargomesh.runtime.temporal.workflow.info", return_value=workflow_info),
+        patch("cargomesh.runtime.temporal.workflow.execute_activity", side_effect=invoke),
+    ):
+        result = asyncio.run(workflow_instance.run(_optimized_plan()))
+
+    assert [call.route_candidate_id for call in calls] == [
+        "synthetic.api.track",
+        "synthetic.browser.track",
+    ]
+    assert result.status is ExecutionStatus.EXECUTED_UNVERIFIED
+    assert [attempt.status for attempt in result.route_attempts] == [
+        RouteAttemptStatus.FAILED,
+        RouteAttemptStatus.SUCCEEDED,
+    ]
+
+
+def test_route_does_not_fallback_for_an_unlisted_failure_code() -> None:
+    workflow_instance = CargoMeshTransactionWorkflow()
+    workflow_info = SimpleNamespace(workflow_id="wf-1")
+    execute = AsyncMock(side_effect=_activity_error("permission_denied"))
+    with (
+        patch("cargomesh.runtime.temporal.workflow.info", return_value=workflow_info),
+        patch("cargomesh.runtime.temporal.workflow.execute_activity", execute),
+    ):
+        result = asyncio.run(workflow_instance.run(_optimized_plan()))
+
+    assert result.status is ExecutionStatus.HALTED
+    assert result.failure_code == "permission_denied"
+    assert len(result.route_attempts) == 1
+    execute.assert_awaited_once()
 
 
 def verification_plan() -> VerificationPlan:

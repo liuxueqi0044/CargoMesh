@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
+import time
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Protocol
 
 from pydantic import JsonValue
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
+
+from cargomesh.routing.models import RouteOutcome, RouteOutcomeKind
+from cargomesh.routing.store import RouteOutcomeStore
 
 from .models import AdapterInvocation, AdapterResult
 
@@ -69,14 +76,37 @@ class AdapterRegistry:
 
 
 class AdapterActivities:
-    def __init__(self, registry: AdapterRegistry) -> None:
+    def __init__(
+        self,
+        registry: AdapterRegistry,
+        *,
+        outcome_store: RouteOutcomeStore | None = None,
+        clock: Callable[[], datetime] | None = None,
+        monotonic: Callable[[], float] | None = None,
+        attempt_provider: Callable[[], int] | None = None,
+    ) -> None:
         self._registry = registry
+        self._outcome_store = outcome_store
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._monotonic = monotonic or time.monotonic
+        self._attempt_provider = attempt_provider or _activity_attempt
 
     @activity.defn(name=EXECUTE_ADAPTER_ACTIVITY)
     async def execute(self, invocation: AdapterInvocation) -> AdapterResult:
+        started = self._monotonic()
         try:
-            return await self._registry.invoke(invocation)
+            result = await self._registry.invoke(invocation)
         except AdapterExecutionError as exc:
+            self._record_outcome(
+                invocation,
+                kind=(
+                    RouteOutcomeKind.RETRYABLE_FAILURE
+                    if exc.retryable
+                    else RouteOutcomeKind.TERMINAL_FAILURE
+                ),
+                latency_ms=_latency_ms(started, self._monotonic()),
+                failure_code=exc.code,
+            )
             details = (exc.diagnostics,) if exc.diagnostics else ()
             raise ApplicationError(
                 exc.message,
@@ -84,6 +114,43 @@ class AdapterActivities:
                 type=exc.code,
                 non_retryable=not exc.retryable,
             ) from exc
+        self._record_outcome(
+            invocation,
+            kind=RouteOutcomeKind.SUCCESS,
+            latency_ms=_latency_ms(started, self._monotonic()),
+        )
+        return result
+
+    def _record_outcome(
+        self,
+        invocation: AdapterInvocation,
+        *,
+        kind: RouteOutcomeKind,
+        latency_ms: int,
+        failure_code: str | None = None,
+    ) -> None:
+        if self._outcome_store is None or invocation.route_candidate_id is None:
+            return
+        attempt = self._attempt_provider()
+        event_id = _outcome_event_id(invocation, attempt)
+        try:
+            self._outcome_store.append(
+                RouteOutcome.issue(
+                    event_id=event_id,
+                    tenant_id=invocation.tenant_id,
+                    transaction_id=invocation.transaction_id,
+                    step_id=invocation.step_id,
+                    candidate_id=invocation.route_candidate_id,
+                    temporal_attempt=attempt,
+                    kind=kind,
+                    latency_ms=latency_ms,
+                    failure_code=failure_code,
+                    occurred_at=self._clock(),
+                )
+            )
+        except Exception:
+            # Routing telemetry must never change the business activity outcome.
+            return
 
 
 class SyntheticTrackingAdapter:
@@ -103,3 +170,22 @@ class SyntheticTrackingAdapter:
                 "notice": "No carrier transaction was executed",
             }
         )
+
+
+def _activity_attempt() -> int:
+    try:
+        return max(1, min(100, activity.info().attempt))
+    except RuntimeError:
+        return 1
+
+
+def _latency_ms(started: float, finished: float) -> int:
+    return max(0, min(86_400_000, round((finished - started) * 1000)))
+
+
+def _outcome_event_id(invocation: AdapterInvocation, attempt: int) -> str:
+    canonical = (
+        f"{invocation.tenant_id}\0{invocation.transaction_id}\0{invocation.step_id}\0"
+        f"{invocation.route_candidate_id}\0{attempt}"
+    ).encode()
+    return "route-outcome:" + hashlib.sha256(canonical).hexdigest()

@@ -17,6 +17,7 @@ _SAFE_ACTIVITY_ERROR_TYPE = re.compile(r"^[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*$")
 
 with workflow.unsafe.imports_passed_through():
     from cargomesh.ir.enums import RiskClass
+    from cargomesh.routing.models import RouteAttemptStatus
     from cargomesh.runtime.adapters import EXECUTE_ADAPTER_ACTIVITY
     from cargomesh.runtime.models import (
         AdapterInvocation,
@@ -26,6 +27,8 @@ with workflow.unsafe.imports_passed_through():
         ExecutionSnapshot,
         ExecutionStatus,
         ExecutionStep,
+        RetryPolicySpec,
+        RouteAttempt,
         StepOutput,
     )
     from cargomesh.runtime.state_machine import transition
@@ -38,8 +41,7 @@ with workflow.unsafe.imports_passed_through():
     )
 
 
-def _temporal_retry_policy(step: ExecutionStep) -> RetryPolicy:
-    spec = step.retry
+def _temporal_retry_policy_spec(spec: RetryPolicySpec) -> RetryPolicy:
     return RetryPolicy(
         initial_interval=timedelta(seconds=spec.initial_interval_seconds),
         backoff_coefficient=spec.backoff_coefficient,
@@ -89,6 +91,7 @@ class CargoMeshTransactionWorkflow:
         self._snapshot = ExecutionSnapshot(
             transaction_id=plan.transaction_id,
             workflow_id=workflow.info().workflow_id,
+            routing_decisions=plan.routing_decisions,
         )
         self._set_status(ExecutionStatus.RUNNING)
         completed_steps: list[ExecutionStep] = []
@@ -241,22 +244,82 @@ class CargoMeshTransactionWorkflow:
     async def _execute_step(
         self, plan: ExecutionPlan, step: ExecutionStep
     ) -> AdapterResult:
-        invocation = AdapterInvocation(
-            transaction_id=plan.transaction_id,
-            tenant_id=plan.tenant_id,
-            step_id=step.step_id,
-            adapter=step.adapter,
-            operation=step.operation,
-            input=step.input,
-        )
-        result = await workflow.execute_activity(
-            EXECUTE_ADAPTER_ACTIVITY,
-            invocation,
-            result_type=AdapterResult,
-            start_to_close_timeout=timedelta(seconds=step.timeout_seconds),
-            retry_policy=_temporal_retry_policy(step),
-        )
-        return result  # type: ignore[no-any-return]
+        alternatives = [
+            (
+                step.route_candidate_id,
+                step.adapter,
+                step.operation,
+                step.timeout_seconds,
+                step.retry,
+                step.fallback_on_error_codes,
+            ),
+            *(
+                (
+                    fallback.candidate_id,
+                    fallback.adapter,
+                    fallback.operation,
+                    fallback.timeout_seconds,
+                    fallback.retry,
+                    fallback.fallback_on_error_codes,
+                )
+                for fallback in step.route_fallbacks
+            ),
+        ]
+        for index, (candidate_id, adapter, operation, timeout, retry, safe_codes) in enumerate(
+            alternatives
+        ):
+            invocation = AdapterInvocation(
+                transaction_id=plan.transaction_id,
+                tenant_id=plan.tenant_id,
+                step_id=step.step_id,
+                adapter=adapter,
+                operation=operation,
+                input=step.input,
+                route_candidate_id=candidate_id,
+            )
+            try:
+                result = await workflow.execute_activity(
+                    EXECUTE_ADAPTER_ACTIVITY,
+                    invocation,
+                    result_type=AdapterResult,
+                    start_to_close_timeout=timedelta(seconds=timeout),
+                    retry_policy=_temporal_retry_policy_spec(retry),
+                )
+            except ActivityError as error:
+                failure_code = _activity_failure_code(error)
+                if candidate_id is not None:
+                    self._append_route_attempt(
+                        RouteAttempt(
+                            step_id=step.step_id,
+                            candidate_id=candidate_id,
+                            adapter=adapter,
+                            status=RouteAttemptStatus.FAILED,
+                            failure_code=failure_code,
+                        )
+                    )
+                can_fallback = (
+                    step.risk_class is RiskClass.READ_ONLY
+                    and index + 1 < len(alternatives)
+                    and failure_code in safe_codes
+                )
+                if not can_fallback:
+                    raise
+                continue
+            if candidate_id is not None:
+                self._append_route_attempt(
+                    RouteAttempt(
+                        step_id=step.step_id,
+                        candidate_id=candidate_id,
+                        adapter=adapter,
+                        status=RouteAttemptStatus.SUCCEEDED,
+                    )
+                )
+            return result  # type: ignore[no-any-return]
+        raise RuntimeError("route alternatives were unexpectedly exhausted")
+
+    def _append_route_attempt(self, attempt: RouteAttempt) -> None:
+        snapshot = self._require_snapshot()
+        self._replace(route_attempts=(*snapshot.route_attempts, attempt))
 
     async def _finish_with_compensation(
         self,

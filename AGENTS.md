@@ -41,6 +41,14 @@ Board 4 implements:
 - durable `VERIFYING`, `VERIFIED`, `NEEDS_REVIEW`, and `HALTED` outcomes;
 - a separate synthetic system-of-record service for cross-channel tests.
 
+Board 5 implements:
+
+- immutable execution-path candidates, policies, health snapshots, and decisions;
+- deterministic integer constraint filtering and multi-factor route ranking;
+- append-only adapter outcome events and outcome-derived circuit health;
+- audited read-only fallback on explicit safe error codes only;
+- separate synthetic API and browser paths verified through the Board 4 ledger.
+
 It does not implement real carrier credentials/adapters, AI repair, route
 optimization, production authentication/authorization, or a
 horizontally-scaled SQL control plane yet.
@@ -61,6 +69,10 @@ horizontally-scaled SQL control plane yet.
   they must not import Temporal, FastAPI, Playwright, HTTP clients, or SQLite.
 - Evidence collectors and execution adapters use separate registries; one may not
   be silently substituted for the other.
+- Routing decisions are immutable Workflow input. Workflows must not query health,
+  policy, databases, or clocks to recompute a route during replay.
+- Automatic fallback is forbidden for effectful steps and for undeclared failure codes.
+- Routing outcome stores must not persist transaction input, adapter output, or secrets.
 - `cargomesh.api` may depend on IR, mapping, and standards public interfaces.
 - Tests must not require internet access. Network synchronization is tested through injected transports or local fixtures.
 
