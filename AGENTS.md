@@ -25,9 +25,17 @@ Board 2 implements:
 - approval signals, retry policy, reverse-order compensation, and cancellation;
 - transaction create/status/approval/cancel HTTP APIs.
 
-It does not implement carrier/browser adapters, route optimization, evidence
-verdicts, authentication/authorization, or a horizontally-scaled SQL control
-plane yet.
+Board 3 implements:
+
+- versioned, checksum-pinned browser adapter packages;
+- a deliberately restricted, read-only browser recipe contract;
+- Playwright execution in isolated contexts with same-origin network policy;
+- semantic locators, portal signatures, drift diagnostics, and bounded artifacts;
+- a synthetic logistics portal and browser-backed Adapter CI.
+
+It does not implement real carrier credentials/adapters, AI repair, route
+optimization, evidence verdicts, authentication/authorization, or a
+horizontally-scaled SQL control plane yet.
 
 ## Dependency rules
 
@@ -37,6 +45,10 @@ plane yet.
 - `cargomesh.runtime.models` and `cargomesh.runtime.state_machine` are pure domain code.
 - Temporal SDK imports are confined to `cargomesh.runtime.temporal` and worker wiring.
 - `cargomesh.runtime.idempotency` must not import FastAPI or Temporal.
+- `cargomesh.adapters.contracts` and package verification must not import Playwright.
+- Playwright imports are confined to `cargomesh.adapters.browser` and worker wiring.
+- Browser recipes may not contain raw CSS/XPath, coordinates, JavaScript, fixed sleeps,
+  file upload, credential values, or absolute navigation URLs.
 - `cargomesh.api` may depend on IR, mapping, and standards public interfaces.
 - Tests must not require internet access. Network synchronization is tested through injected transports or local fixtures.
 

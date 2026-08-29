@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cargomesh"
-version = "0.2.0"
+version = "0.3.0"
 description = "CargoMesh business transaction compiler for container logistics"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -13,6 +13,7 @@ license-files = ["third_party/dcsa/LICENSE", "NOTICE"]
 authors = [{ name = "liuxueqi0044" }]
 dependencies = [
   "fastapi>=0.115,<1",
+  "playwright>=1.62,<2",
   "pydantic>=2.11,<3",
   "pyyaml>=6.0,<7",
   "temporalio[pydantic]>=1.32,<2",
@@ -30,8 +31,10 @@ dev = [
 
 [project.scripts]
 cargomesh-api = "cargomesh.api.main:run"
+cargomesh-adapter = "cargomesh.adapters.cli:main"
 cargomesh-dcsa = "cargomesh.standards.cli:main"
 cargomesh-runtime-api = "cargomesh.api.runtime_server:main"
+cargomesh-synthetic-portal = "cargomesh.adapters.synthetic_portal:run_synthetic_portal"
 cargomesh-worker = "cargomesh.runtime.worker:main"
 
 [tool.hatch.build.targets.wheel]
@@ -41,8 +44,11 @@ packages = ["src/cargomesh"]
 "third_party/dcsa" = "cargomesh/standards/vendor/dcsa"
 
 [tool.pytest.ini_options]
-addopts = "-q --strict-markers --disable-warnings"
+addopts = "-q --import-mode=importlib --strict-markers --disable-warnings"
 testpaths = ["tests"]
+markers = [
+  "browser: exercises the real Playwright browser runtime",
+]
 
 [tool.ruff]
 target-version = "py312"

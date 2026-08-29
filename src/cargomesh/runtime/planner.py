@@ -93,3 +93,15 @@ def synthetic_tracking_planner() -> StaticExecutionPlanner:
             )
         }
     )
+
+
+def synthetic_browser_tracking_planner() -> StaticExecutionPlanner:
+    """Bind tracking to Board 3's certified synthetic browser adapter."""
+
+    return StaticExecutionPlanner(
+        {
+            "shipment.track.read": CapabilityBinding(
+                adapter="synthetic.browser.track", operation="fetch"
+            )
+        }
+    )

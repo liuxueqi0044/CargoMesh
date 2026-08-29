@@ -5,6 +5,8 @@ container logistics. Board 1 turns a pinned DCSA Track & Trace 2.3 query into
 deterministic, versioned Transaction IR. Board 2 submits an execution plan
 idempotently and runs it through Temporal with explicit approval, retry,
 compensation, cancellation, and queryable state.
+Board 3 executes checksum-pinned, read-only browser recipes in isolated
+Playwright contexts and stops on portal drift.
 
 Execution completion is deliberately named `EXECUTED_UNVERIFIED`. Independent
 cross-channel evidence is a later board, so CargoMesh never turns “the adapter
@@ -27,11 +29,14 @@ returned” into an unsupported `SUCCESS` or `VERIFIED` claim.
 | Idempotency | Atomic tenant-scoped SQLite reference index with replay, conflict and failed-start retry semantics |
 | Adapter boundary | Worker-side registry, safe failures and explicit synthetic local-demo adapter |
 | Transaction API | Create, status, approval and cancel with required `Idempotency-Key` |
+| Adapter packages | Strict manifest/recipe schemas, SHA-256 pinning, offline package checks and CLI |
+| Browser executor | Semantic locators, fresh contexts, exact-origin HTTP policy and drift signatures |
+| Adapter CI | Synthetic portal fault variants and real headless Chromium acceptance tests |
 
-The first accepted capability remains `shipment.track.read`. Board 2 supplies the
-runtime, but not a real carrier or browser adapter. Route optimization, evidence
-verdicts, authentication/authorization and a distributed control-plane database
-belong to later boards.
+The first accepted capability remains `shipment.track.read`. Board 3 supplies a
+synthetic browser adapter, not a real carrier integration. Route optimization,
+evidence verdicts, production authentication/authorization and a distributed
+control-plane database belong to later boards.
 
 ## Quick start
 
@@ -39,10 +44,12 @@ Requires Python 3.12 and [uv](https://docs.astral.sh/uv/).
 
 ```powershell
 uv sync --dev
+uv run playwright install chromium
 uv run pytest
 uv run ruff check .
 uv run mypy src
 uv run cargomesh-dcsa check
+uv run cargomesh-adapter check
 uv run uvicorn cargomesh.api.main:app --reload
 ```
 
@@ -114,6 +121,38 @@ The flags are intentionally explicit: the included adapter returns an empty,
 synthetic event set and the notice `No carrier transaction was executed`. A real
 deployment must register a separately certified carrier or browser adapter.
 
+### Board 3 browser path
+
+With the Temporal development server running, start the local synthetic portal,
+the browser-enabled worker, and the matching runtime API in separate terminals:
+
+```powershell
+uv run cargomesh-synthetic-portal
+uv run cargomesh-worker --enable-synthetic-browser-adapter
+uv run cargomesh-runtime-api --enable-synthetic-browser-binding
+```
+
+The built-in `synthetic.browser.track` package is loaded offline and its recipe
+bytes must match the SHA-256 recorded in the manifest. The executor accepts only
+the restricted read-only recipe language documented in
+`docs/architecture/board-3-implementation-contract.md`; it does not execute
+arbitrary JavaScript, CSS/XPath selectors, absolute URLs, uploads, downloads, or
+fixed sleeps.
+
+Every invocation gets a new non-persistent browser context. HTTP subresources
+outside the configured portal origin are aborted, and the label/heading/notice
+signature is checked before form interaction. Controlled failure traces are off
+by default; opt in with `--browser-trace-directory PATH`. Temporal receives only
+opaque trace metadata, never the path or trace bytes.
+
+Use a different local portal origin with `CARGOMESH_SYNTHETIC_PORTAL_URL` or
+`--synthetic-portal-url`. Validate an adapter package without launching a browser:
+
+```powershell
+uv run cargomesh-adapter check
+uv run cargomesh-adapter check --path C:\path\to\adapter-package
+```
+
 Submit a compiled IR or DCSA TNT source using the same body accepted by the
 compiler endpoint:
 
@@ -145,6 +184,7 @@ lockstep is enforced by `tests/standards/test_compatibility.py`.
 
 ```text
 src/cargomesh/
+├─ adapters/        versioned packages, restricted browser executor and synthetic portal
 ├─ api/             FastAPI transport and safe error envelopes
 ├─ application/     compile and reference-data use cases
 ├─ ir/              Transaction IR, canonicalization and migrations

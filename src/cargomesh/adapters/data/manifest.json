@@ -1,0 +1,16 @@
+{
+  "schema_version": "cargomesh.adapter-manifest/v1",
+  "name": "synthetic.browser.track",
+  "version": "0.1.0",
+  "portal_version": "synthetic-portal/v1",
+  "minimum_cargomesh_version": "0.3.0",
+  "capabilities": [
+    "shipment.track.read"
+  ],
+  "operations": {
+    "fetch": {
+      "file": "fetch.recipe.json",
+      "sha256": "sha256:fcd232716661dfe92ab21d4b89771b3de3852ab4de6ec6d30b1b9b4ff97255ce"
+    }
+  }
+}

@@ -17,6 +17,7 @@ from .planner import (
     CapabilityBinding,
     MissingCapabilityBinding,
     StaticExecutionPlanner,
+    synthetic_browser_tracking_planner,
     synthetic_tracking_planner,
 )
 from .state_machine import InvalidExecutionTransition, transition
@@ -37,6 +38,7 @@ __all__ = [
     "RetryPolicySpec",
     "StaticExecutionPlanner",
     "StepOutput",
+    "synthetic_browser_tracking_planner",
     "synthetic_tracking_planner",
     "transition",
 ]

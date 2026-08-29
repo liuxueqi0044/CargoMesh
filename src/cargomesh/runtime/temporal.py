@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.client import Client
 from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
 from temporalio.contrib.pydantic import pydantic_data_converter
-from temporalio.exceptions import ActivityError, WorkflowAlreadyStartedError
+from temporalio.exceptions import ActivityError, ApplicationError, WorkflowAlreadyStartedError
+
+_SAFE_ACTIVITY_ERROR_TYPE = re.compile(r"^[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*$")
 
 with workflow.unsafe.imports_passed_through():
     from cargomesh.ir.enums import RiskClass
@@ -35,6 +38,21 @@ def _temporal_retry_policy(step: ExecutionStep) -> RetryPolicy:
         maximum_attempts=spec.maximum_attempts,
         non_retryable_error_types=list(spec.non_retryable_error_types),
     )
+
+
+def _activity_failure_code(error: ActivityError) -> str:
+    """Keep a bounded adapter code while rejecting arbitrary exception text."""
+
+    cause = error.cause
+    if isinstance(cause, ApplicationError):
+        error_type = cause.type
+        if (
+            isinstance(error_type, str)
+            and len(error_type) <= 128
+            and _SAFE_ACTIVITY_ERROR_TYPE.fullmatch(error_type)
+        ):
+            return error_type
+    return "activity_failed"
 
 
 @workflow.defn(name="CargoMeshTransactionWorkflow")
@@ -85,7 +103,7 @@ class CargoMeshTransactionWorkflow:
             self._replace(current_step_id=step.step_id, awaiting_approval_step_id=None)
             try:
                 result = await self._execute_step(plan, step)
-            except ActivityError:
+            except ActivityError as error:
                 possibly_effectful = (
                     [*completed_steps, step]
                     if step.risk_class is not RiskClass.READ_ONLY
@@ -97,7 +115,7 @@ class CargoMeshTransactionWorkflow:
                     else ExecutionStatus.HALTED
                 )
                 return await self._finish_with_compensation(
-                    plan, possibly_effectful, terminal, "activity_failed"
+                    plan, possibly_effectful, terminal, _activity_failure_code(error)
                 )
             completed_steps.append(step)
             snapshot = self._require_snapshot()

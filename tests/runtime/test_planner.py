@@ -7,6 +7,7 @@ from cargomesh.runtime import (
     CapabilityBinding,
     MissingCapabilityBinding,
     StaticExecutionPlanner,
+    synthetic_browser_tracking_planner,
 )
 
 
@@ -43,3 +44,13 @@ def test_static_planner_fails_closed_without_binding() -> None:
         StaticExecutionPlanner({}).build(
             command(), transaction_id="txn-1", business_digest="sha256:" + "a" * 64
         )
+
+
+def test_board_3_browser_binding_preserves_the_ir_input_shape() -> None:
+    plan = synthetic_browser_tracking_planner().build(
+        command(), transaction_id="txn-1", business_digest="sha256:" + "a" * 64
+    )
+
+    assert plan.steps[0].adapter == "synthetic.browser.track"
+    assert plan.steps[0].operation == "fetch"
+    assert plan.steps[0].input["transaction"]["subject"]["carrier_booking_reference"] == "CBR-1"

@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse, Response
 
+from cargomesh import __version__
 from cargomesh.api.dependencies import (
     TransactionServiceProtocol,
     get_compile_service,
@@ -108,7 +109,7 @@ def create_app(
     reference_data_provider: Any | None = None,
     transaction_service: TransactionServiceProtocol | None = None,
 ) -> FastAPI:
-    application = FastAPI(title="CargoMesh API", version="0.2.0")
+    application = FastAPI(title="CargoMesh API", version=__version__)
     application.state.compile_service = compile_service or CompileService()
     application.state.transaction_service = transaction_service
     application.state.reference_data_service = ReferenceDataService(

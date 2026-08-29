@@ -1,0 +1,97 @@
+{
+  "schema_version": "cargomesh.browser-recipe/v1",
+  "operation": "fetch",
+  "capability": "shipment.track.read",
+  "risk_class": "READ_ONLY",
+  "portal_signatures": [
+    {
+      "key": "track_heading",
+      "locator": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Track shipment"
+      },
+      "expectation": {
+        "mode": "equals",
+        "value": "Track shipment"
+      }
+    },
+    {
+      "key": "synthetic_notice",
+      "locator": {
+        "kind": "test_id",
+        "value": "synthetic-notice"
+      },
+      "expectation": {
+        "mode": "contains",
+        "value": "No carrier transaction"
+      }
+    },
+    {
+      "key": "booking-field",
+      "locator": {
+        "kind": "label",
+        "value": "Booking reference"
+      }
+    }
+  ],
+  "actions": [
+    {
+      "kind": "navigate",
+      "path": "/track"
+    },
+    {
+      "kind": "fill",
+      "locator": {
+        "kind": "label",
+        "value": "Booking reference"
+      },
+      "value": {
+        "source": "input",
+        "pointer": "/transaction/subject/carrier_booking_reference"
+      }
+    },
+    {
+      "kind": "click",
+      "locator": {
+        "kind": "role",
+        "role": "button",
+        "name": "Search"
+      }
+    },
+    {
+      "kind": "wait_visible",
+      "locator": {
+        "kind": "text",
+        "value": "Tracking result"
+      }
+    },
+    {
+      "kind": "assert_text",
+      "locator": {
+        "kind": "test_id",
+        "value": "synthetic-notice"
+      },
+      "expectation": {
+        "mode": "contains",
+        "value": "No carrier transaction"
+      }
+    },
+    {
+      "kind": "extract_text",
+      "locator": {
+        "kind": "test_id",
+        "value": "tracking-reference"
+      },
+      "output_key": "shipment.reference"
+    },
+    {
+      "kind": "extract_text",
+      "locator": {
+        "kind": "test_id",
+        "value": "tracking-status"
+      },
+      "output_key": "shipment.status"
+    }
+  ]
+}

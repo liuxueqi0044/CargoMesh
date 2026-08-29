@@ -4,7 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from temporalio.exceptions import ActivityError
+from temporalio.exceptions import ActivityError, ApplicationError
 
 from cargomesh.ir.enums import RiskClass, VerificationLevel
 from cargomesh.runtime.models import (
@@ -152,3 +152,34 @@ def test_failed_step_compensates_completed_steps_in_reverse_order() -> None:
     assert result.completed_step_ids == ("one", "two")
     assert result.compensated_step_ids == ("three", "two", "one")
     assert result.failure_code == "activity_failed"
+
+
+def test_safe_adapter_failure_code_survives_the_activity_boundary() -> None:
+    activity_error = ActivityError(
+        "failed",
+        scheduled_event_id=1,
+        started_event_id=2,
+        identity="test",
+        activity_type="adapter",
+        activity_id="read",
+        retry_state=None,
+    )
+    activity_error.__cause__ = ApplicationError(
+        "Portal signature no longer matches the certified adapter",
+        type="portal_drift_detected",
+        non_retryable=True,
+    )
+    workflow_instance = CargoMeshTransactionWorkflow()
+    workflow_info = SimpleNamespace(workflow_id="wf-1")
+
+    with (
+        patch("cargomesh.runtime.temporal.workflow.info", return_value=workflow_info),
+        patch(
+            "cargomesh.runtime.temporal.workflow.execute_activity",
+            AsyncMock(side_effect=activity_error),
+        ),
+    ):
+        result = asyncio.run(workflow_instance.run(plan(step("read", "fetch"))))
+
+    assert result.status is ExecutionStatus.HALTED
+    assert result.failure_code == "portal_drift_detected"

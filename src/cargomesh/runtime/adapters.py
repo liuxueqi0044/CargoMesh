@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from typing import Protocol
 
+from pydantic import JsonValue
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
@@ -20,11 +20,19 @@ class AdapterExecutor(Protocol):
 class AdapterExecutionError(RuntimeError):
     """Safe adapter failure that can cross the activity boundary."""
 
-    def __init__(self, code: str, message: str, *, retryable: bool) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool,
+        diagnostics: dict[str, JsonValue] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.retryable = retryable
+        self.diagnostics = diagnostics or {}
 
 
 class AdapterRegistry:
@@ -69,8 +77,10 @@ class AdapterActivities:
         try:
             return await self._registry.invoke(invocation)
         except AdapterExecutionError as exc:
+            details = (exc.diagnostics,) if exc.diagnostics else ()
             raise ApplicationError(
                 exc.message,
+                *details,
                 type=exc.code,
                 non_retryable=not exc.retryable,
             ) from exc
@@ -93,6 +103,3 @@ class SyntheticTrackingAdapter:
                 "notice": "No carrier transaction was executed",
             }
         )
-
-
-AsyncAdapterFunction = Callable[[AdapterInvocation], Awaitable[AdapterResult]]

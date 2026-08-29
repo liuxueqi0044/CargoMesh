@@ -11,7 +11,10 @@ import uvicorn
 
 from cargomesh.application.transactions import TransactionService
 from cargomesh.runtime.idempotency import SQLiteSubmissionStore
-from cargomesh.runtime.planner import synthetic_tracking_planner
+from cargomesh.runtime.planner import (
+    synthetic_browser_tracking_planner,
+    synthetic_tracking_planner,
+)
 from cargomesh.runtime.temporal import TemporalExecutionGateway, connect_temporal
 
 from .main import create_app
@@ -40,14 +43,24 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="explicitly bind shipment.track.read to the non-carrier local demo adapter",
     )
+    parser.add_argument(
+        "--enable-synthetic-browser-binding",
+        action="store_true",
+        help="bind shipment.track.read to the Board 3 synthetic browser adapter",
+    )
     return parser
 
 
 async def serve(args: argparse.Namespace) -> None:
     client = await connect_temporal(args.target, namespace=args.namespace)
     submissions = SQLiteSubmissionStore(args.database)
+    planner = (
+        synthetic_browser_tracking_planner()
+        if args.enable_synthetic_browser_binding
+        else synthetic_tracking_planner()
+    )
     service = TransactionService(
-        planner=synthetic_tracking_planner(),
+        planner=planner,
         submissions=submissions,
         gateway=TemporalExecutionGateway(client, task_queue=args.task_queue),
     )
@@ -64,9 +77,9 @@ async def serve(args: argparse.Namespace) -> None:
 def main(argv: Sequence[str] | None = None) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
-    if not args.enable_synthetic_adapter_binding:
+    if args.enable_synthetic_adapter_binding == args.enable_synthetic_browser_binding:
         parser.error(
-            "Board 2 ships no carrier adapter; use --enable-synthetic-adapter-binding "
-            "only for the local demonstration"
+            "choose exactly one explicit local binding: --enable-synthetic-adapter-binding "
+            "or --enable-synthetic-browser-binding"
         )
     asyncio.run(serve(args))

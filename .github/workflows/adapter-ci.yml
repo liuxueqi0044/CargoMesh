@@ -1,0 +1,51 @@
+name: Adapter CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Install Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Install project
+        run: uv sync --locked --dev
+
+      - name: Install Chromium runtime
+        run: uv run playwright install --with-deps chromium
+
+      - name: Verify source and adapters
+        run: |
+          uv run cargomesh-dcsa check
+          uv run cargomesh-adapter check
+          uv run ruff check .
+          uv run mypy src
+          uv run pytest
+
+      - name: Build wheel
+        run: uv build
+
+      - name: Smoke-test installed wheel
+        run: |
+          python -m venv .wheel-smoke
+          .wheel-smoke/bin/pip install dist/*.whl
+          .wheel-smoke/bin/cargomesh-adapter check
