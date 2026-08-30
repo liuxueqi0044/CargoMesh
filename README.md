@@ -17,6 +17,9 @@ append-only per-tenant audit hash chains.
 Board 7 freezes payload-free policy decisions for every possible execution
 attempt and resolves opaque credential references only inside the worker
 Activity that invokes a credential-aware adapter.
+Board 8 supplies an offline Private Runner reference boundary for one-time
+enrollment, pinned identity, fenced task leases, heartbeat recovery, artifact
+relay, sandbox declarations, and signed-release policy.
 
 Execution without a configured verifier remains deliberately named
 `EXECUTED_UNVERIFIED`. Only a separate evidence collector can produce
@@ -57,6 +60,9 @@ evidence becomes `HALTED`.
 | Protected runtime | Explicit opt-in 401/403/404 enforcement and verified approval actors; local mode stays compatible |
 | Execution policy | Digest-bound embedded/OPA-shaped decisions, deterministic rules, fail-closed denial, frozen approval requirements |
 | Credential boundary | Tenant/environment/adapter/capability-scoped references, metadata-only SQLite directory, ephemeral wiped leases |
+| Private Runner identity | One-time hashed enrollment challenges, pinned public-key digests, scoped queues, revocation and health state |
+| Runner task transport | Atomic SQLite acquisition, monotonic fencing, bounded heartbeat, conservative recovery and idempotent receipts |
+| Runner execution policy | Artifact relay, sandbox/egress/session contracts, SemVer compatibility and non-overclaiming deployment profiles |
 
 The first accepted capability remains `shipment.track.read`. Board 3 supplies a
 synthetic API and browser adapters, not real carrier integrations. Boards 6–7
@@ -281,6 +287,27 @@ an explicitly registered provider, calls only a credential-aware adapter, and
 closes every lease on success, failure, or partial resolution. The included
 environment and memory providers are explicit local/bootstrap surfaces; a
 production secret manager remains deployment-owned.
+
+### Board 8 Private Runner reference
+
+The `cargomesh.runner` package provides a local reference control boundary.
+Enrollment tokens are random, one-time and short-lived; SQLite stores only their
+SHA-256 digests. A runner identity pins a runner-generated public-key digest,
+tenant, environment, pool, capabilities, platform, version and opaque queue id.
+No private key or certificate bytes cross this interface.
+
+`SQLiteTaskStore` authorizes that exact active identity before leasing work.
+Every reacquisition receives a larger fencing token. An expired lease is never
+silently reassigned: a pre-effect checkpoint may be requeued explicitly, while
+post-effect or ambiguous state moves to verification/reconciliation. Results
+are digest-only, fenced and idempotent.
+
+The artifact relay enforces type, MIME, size, classification and sanitization
+policy before an injected sink receives bytes; SQLite stores metadata receipts
+only. Sandbox, egress, browser-session and update objects are enforceable
+contracts for an external runner implementation. This repository does not
+claim production mTLS, CA issuance, hardened containers/VMs, object storage or
+an installed customer-network daemon.
 
 Submit a compiled IR or DCSA TNT source using the same body accepted by the
 compiler endpoint:

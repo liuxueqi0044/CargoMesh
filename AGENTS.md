@@ -65,9 +65,18 @@ Board 7 implements:
 - tenant/environment/adapter/capability-scoped opaque credential bindings;
 - worker-only ephemeral secret resolution with best-effort buffer wiping.
 
+Board 8 implements:
+
+- one-time, digest-only Private Runner enrollment and pinned public-key identity;
+- tenant/environment/pool/capability-scoped runner authorization and revocation;
+- atomic SQLite task leases with fencing, heartbeat and conservative recovery;
+- metadata-only artifact receipts with an injected bounded content sink;
+- sandbox, egress, browser-session, release and deployment-profile contracts.
+
 It does not implement real carrier credentials/adapters, AI repair, an identity
 provider/login UI, control-plane management APIs, hosted OPA/Vault, or a
-horizontally-scaled SQL control plane yet.
+horizontally-scaled SQL control plane yet. The Private Runner package does not
+provide production mTLS/CA, hardened container/VM execution or a daemon installer.
 
 ## Dependency rules
 
@@ -103,6 +112,12 @@ horizontally-scaled SQL control plane yet.
 - Secret values may exist only in short-lived worker-side leases. Workflow inputs,
   plans, databases, logs, diagnostics, adapter results, and exceptions contain only
   opaque references or digests.
+- Runner enrollment tokens are single-use bootstrap values; persistence contains
+  only their digest. Private keys never cross the enrollment boundary.
+- An expired effectful task lease must be recovered before reassignment. Unknown or
+  post-effect state always enters verification/reconciliation.
+- Runner artifacts are governed by declared type and MIME, never filename extension;
+  blob bytes stay outside SQLite and receipt metadata contains only opaque references.
 - `cargomesh.api` may depend on IR, mapping, and standards public interfaces.
 - Tests must not require internet access. Network synchronization is tested through injected transports or local fixtures.
 
