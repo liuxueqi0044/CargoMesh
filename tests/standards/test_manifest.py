@@ -34,12 +34,33 @@ def test_pinned_dcsa_sources_verify_offline() -> None:
     assert report.ok
     assert {check.source.source_path for check in report.checks} == {
         "LICENSE",
+        "bkg/v2/BKG_v2.0.5.yaml",
         "domain/dcsa/dcsa_domain_v2.0.0.yaml",
         "domain/error/error_domain_v1.0.0.yaml",
         "domain/event/event_domain_v2.0.0.yaml",
         "tnt/v2/tnt_v2.3.0.yaml",
     }
     assert all(check.actual_sha256 == check.source.sha256 for check in report.checks)
+
+
+def test_pinned_booking_contract_contains_the_reviewed_vertical_slice() -> None:
+    specification = (MANIFEST_PATH.parent / "bkg/v2/BKG_v2.0.5.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    for contract_fragment in (
+        "version: 2.0.5",
+        "/v2/bookings:",
+        "operationId: create-bookings",
+        "operationId: get-bookings",
+        "operationId: cancel-booking",
+        "CreateBooking:",
+        "carrierBookingRequestReference",
+        "shipmentLocations",
+        "requestedEquipments",
+        "documentParties",
+    ):
+        assert contract_fragment in specification
 
 
 def test_tampered_vendor_file_fails_digest_verification(tmp_path: Path) -> None:

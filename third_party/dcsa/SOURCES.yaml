@@ -1,5 +1,12 @@
 schema_version: cargomesh.sources/v1
 sources:
+  - path: bkg/v2/BKG_v2.0.5.yaml
+    source_path: bkg/v2/BKG_v2.0.5.yaml
+    url: https://raw.githubusercontent.com/dcsaorg/DCSA-OpenAPI/7767437e7a752437538786e64f2734c95b513d52/bkg/v2/BKG_v2.0.5.yaml
+    sha256: c5a04f84d37c0086a4ad71aeeb489f87e98d12ad5bd24b0fef5e85d0b9d1400f
+    repository: https://github.com/dcsaorg/DCSA-OpenAPI.git
+    commit: 7767437e7a752437538786e64f2734c95b513d52
+    license: Apache-2.0
   - path: tnt/v2/tnt_v2.3.0.yaml
     source_path: tnt/v2/tnt_v2.3.0.yaml
     url: https://raw.githubusercontent.com/dcsaorg/DCSA-OpenAPI/7767437e7a752437538786e64f2734c95b513d52/tnt/v2/tnt_v2.3.0.yaml

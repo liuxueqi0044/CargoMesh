@@ -127,6 +127,9 @@ class CargoMeshTransactionWorkflow:
             try:
                 result = await self._execute_step(plan, step)
             except ActivityError as error:
+                failure_code = _activity_failure_code(error)
+                if failure_code in step.unknown_effect_error_codes:
+                    return await self._finish_unknown_effect(plan, failure_code)
                 possibly_effectful = (
                     [*completed_steps, step]
                     if step.risk_class is not RiskClass.READ_ONLY
@@ -138,7 +141,7 @@ class CargoMeshTransactionWorkflow:
                     else ExecutionStatus.HALTED
                 )
                 return await self._finish_with_compensation(
-                    plan, possibly_effectful, terminal, _activity_failure_code(error)
+                    plan, possibly_effectful, terminal, failure_code
                 )
             completed_steps.append(step)
             snapshot = self._require_snapshot()
@@ -169,6 +172,43 @@ class CargoMeshTransactionWorkflow:
             report = await self._execute_verification(plan)
         except ActivityError as error:
             self._replace(failure_code=_activity_failure_code(error))
+            self._set_status(ExecutionStatus.HALTED)
+            return self._require_snapshot()
+        if (
+            report.transaction_id != plan.transaction_id
+            or report.business_digest != plan.business_digest
+            or report.required_level is not plan.verification_level
+        ):
+            self._replace(failure_code="verification_report_mismatch")
+            self._set_status(ExecutionStatus.HALTED)
+            return self._require_snapshot()
+        self._replace(verification=report)
+        if report.verdict is VerificationVerdict.VERIFIED:
+            self._set_status(ExecutionStatus.VERIFIED)
+        elif report.verdict is VerificationVerdict.NEEDS_REVIEW:
+            self._set_status(ExecutionStatus.NEEDS_REVIEW)
+        else:
+            self._set_status(ExecutionStatus.HALTED)
+        return self._require_snapshot()
+
+    async def _finish_unknown_effect(
+        self, plan: ExecutionPlan, failure_code: str
+    ) -> ExecutionSnapshot:
+        """Reconcile an indeterminate write without retrying or compensating blindly."""
+
+        self._replace(
+            current_step_id=None,
+            awaiting_approval_step_id=None,
+            failure_code=failure_code,
+        )
+        if plan.verification is None:
+            self._set_status(ExecutionStatus.HALTED)
+            return self._require_snapshot()
+        self._set_status(ExecutionStatus.VERIFYING)
+        try:
+            report = await self._execute_verification(plan)
+        except ActivityError:
+            self._replace(failure_code="unknown_effect_verification_failed")
             self._set_status(ExecutionStatus.HALTED)
             return self._require_snapshot()
         if (
@@ -350,14 +390,35 @@ class CargoMeshTransactionWorkflow:
             for step in reversed(compensatable):
                 compensation = step.compensation
                 assert compensation is not None
+                compensation_input = dict(compensation.input)
+                if compensation.include_effect_reference:
+                    effect_reference = next(
+                        (
+                            output.effect_reference
+                            for output in reversed(self._require_snapshot().outputs)
+                            if output.step_id == step.step_id
+                            and output.effect_reference is not None
+                        ),
+                        None,
+                    )
+                    if effect_reference is None:
+                        self._replace(
+                            failure_code="compensation_reference_missing",
+                            current_step_id=None,
+                        )
+                        self._set_status(ExecutionStatus.HALTED)
+                        return self._require_snapshot()
+                    compensation_input["effect_reference"] = effect_reference
                 invocation = AdapterInvocation(
                     transaction_id=plan.transaction_id,
                     tenant_id=plan.tenant_id,
                     environment_id=plan.environment_id,
                     step_id=step.step_id,
+                    capability=compensation.capability,
                     adapter=compensation.adapter,
                     operation=compensation.operation,
-                    input=compensation.input,
+                    input=compensation_input,
+                    credential_binding_digest=compensation.credential_binding_digest,
                 )
                 try:
                     await workflow.execute_activity(

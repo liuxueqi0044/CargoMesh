@@ -101,9 +101,27 @@ class RetryPolicySpec(RuntimeModel):
 class CompensationSpec(RuntimeModel):
     adapter: RuntimeName
     operation: RuntimeName
+    capability: RuntimeName | None = None
+    risk_class: RiskClass = RiskClass.REVERSIBLE_WRITE
+    execution_channel: ExecutionChannel = ExecutionChannel.API
+    credential_binding_digest: str | None = None
+    include_effect_reference: bool = False
     input: dict[str, JsonValue] = Field(default_factory=dict)
     timeout_seconds: int = Field(default=60, ge=1, le=86400)
     retry: RetryPolicySpec = Field(default_factory=RetryPolicySpec)
+
+    @model_validator(mode="after")
+    def validate_compensation(self) -> CompensationSpec:
+        if self.risk_class is RiskClass.READ_ONLY:
+            raise ValueError("compensation must declare an effectful risk class")
+        _validate_optional_digest(
+            self.credential_binding_digest, "credential_binding_digest"
+        )
+        if self.credential_binding_digest is not None and self.capability is None:
+            raise ValueError("compensation credential binding requires a capability")
+        if self.include_effect_reference and self.capability is None:
+            raise ValueError("effect-referenced compensation requires a capability")
+        return self
 
 
 class RouteFallbackSpec(RuntimeModel):
@@ -145,6 +163,7 @@ class ExecutionStep(RuntimeModel):
     compensation: CompensationSpec | None = None
     route_candidate_id: RuntimeName | None = None
     fallback_on_error_codes: tuple[RuntimeName, ...] = ()
+    unknown_effect_error_codes: tuple[RuntimeName, ...] = ()
     route_fallbacks: tuple[RouteFallbackSpec, ...] = ()
     execution_channel: ExecutionChannel = ExecutionChannel.API
     credential_binding_digest: str | None = None
@@ -163,6 +182,15 @@ class ExecutionStep(RuntimeModel):
             set(self.fallback_on_error_codes)
         ):
             raise ValueError("fallback error codes must not contain duplicates")
+        if len(self.unknown_effect_error_codes) != len(
+            set(self.unknown_effect_error_codes)
+        ):
+            raise ValueError("unknown-effect error codes must not contain duplicates")
+        if self.unknown_effect_error_codes:
+            if self.risk_class is RiskClass.READ_ONLY:
+                raise ValueError("unknown-effect errors require an effectful step")
+            if self.retry.maximum_attempts != 1:
+                raise ValueError("unknown-effect steps must disable automatic retries")
         if self.route_candidate_id is None and (
             self.fallback_on_error_codes or self.route_fallbacks
         ):
@@ -243,17 +271,42 @@ class ExecutionPlan(RuntimeModel):
         if self.policy_decisions:
             attempts = [
                 (
-                    step,
+                    step.step_id,
+                    step.capability,
+                    step.risk_class,
                     step.route_candidate_id or step.adapter,
                     step.adapter,
                     step.execution_channel,
+                    False,
                 )
                 for step in self.steps
             ]
             attempts.extend(
-                (step, fallback.candidate_id, fallback.adapter, fallback.execution_channel)
+                (
+                    step.step_id,
+                    step.capability,
+                    step.risk_class,
+                    fallback.candidate_id,
+                    fallback.adapter,
+                    fallback.execution_channel,
+                    False,
+                )
                 for step in self.steps
                 for fallback in step.route_fallbacks
+            )
+            attempts.extend(
+                (
+                    step.step_id,
+                    compensation.capability,
+                    compensation.risk_class,
+                    compensation.adapter,
+                    compensation.adapter,
+                    compensation.execution_channel,
+                    True,
+                )
+                for step in self.steps
+                if (compensation := step.compensation) is not None
+                and compensation.capability is not None
             )
             if len(attempts) != len(self.policy_decisions):
                 raise ValueError("each execution attempt requires one frozen policy decision")
@@ -261,13 +314,15 @@ class ExecutionPlan(RuntimeModel):
             for attempt, policy_decision in zip(
                 attempts, self.policy_decisions, strict=True
             ):
-                step, route, adapter, channel = attempt
+                step_id, capability, risk_class, route, adapter, channel, is_compensation = (
+                    attempt
+                )
                 policy_input = policy_decision.input
                 if (
                     policy_input.tenant_id != self.tenant_id
                     or policy_input.environment_id != self.environment_id
-                    or policy_input.capability != step.capability
-                    or policy_input.risk_class is not step.risk_class
+                    or policy_input.capability != capability
+                    or policy_input.risk_class is not risk_class
                     or policy_input.data_classification is not self.data_classification
                     or policy_input.requested_verification_level
                     is not self.verification_level
@@ -279,7 +334,9 @@ class ExecutionPlan(RuntimeModel):
                 if policy_decision.effect is PolicyEffect.DENY:
                     raise ValueError("denied execution attempts cannot enter a plan")
                 if policy_decision.effect is PolicyEffect.REQUIRE_APPROVAL:
-                    approval_steps.add(step.step_id)
+                    if is_compensation:
+                        raise ValueError("compensation policy must allow execution directly")
+                    approval_steps.add(step_id)
             for step in self.steps:
                 if step.step_id in approval_steps and not step.requires_approval:
                     raise ValueError("policy approval must be frozen into the execution step")

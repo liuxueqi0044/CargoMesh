@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cargomesh"
-version = "0.8.0"
+version = "0.9.0"
 description = "CargoMesh business transaction compiler for container logistics"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -38,6 +38,8 @@ cargomesh-runtime-api = "cargomesh.api.runtime_server:main"
 cargomesh-synthetic-portal = "cargomesh.adapters.synthetic_portal:run_synthetic_portal"
 cargomesh-synthetic-evidence = "cargomesh.verification.synthetic_evidence:run_synthetic_evidence_service"
 cargomesh-synthetic-api = "cargomesh.adapters.synthetic_api:run_synthetic_tracking_api"
+cargomesh-synthetic-booking-carrier = "cargomesh.booking.synthetic_carrier:run_synthetic_carrier"
+cargomesh-synthetic-booking-ledger = "cargomesh.booking.synthetic_carrier:run_synthetic_ledger"
 cargomesh-worker = "cargomesh.runtime.worker:main"
 
 [tool.hatch.build.targets.wheel]

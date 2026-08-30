@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from cargomesh.credentials import CredentialBindingStore
+from cargomesh.ir.enums import RiskClass
 from cargomesh.policy import PolicyDecision, PolicyEffect, PolicyInput, PolicyProvider
 from cargomesh.routing.models import ExecutionChannel
 
@@ -61,6 +62,7 @@ async def apply_execution_policy(
 
     primary_decisions: list[PolicyDecision] = []
     fallback_decisions: list[PolicyDecision] = []
+    compensation_decisions: list[PolicyDecision] = []
     updated_steps: list[ExecutionStep] = []
     for step in plan.steps:
         binding_digest = _binding_digest(
@@ -73,7 +75,8 @@ async def apply_execution_policy(
         primary = await _evaluate_attempt(
             provider,
             plan=plan,
-            step=step,
+            capability=step.capability,
+            risk_class=step.risk_class,
             environment_id=environment_id,
             principal_ref=principal_ref,
             route=step.route_candidate_id or step.adapter,
@@ -96,7 +99,8 @@ async def apply_execution_policy(
             decision = await _evaluate_attempt(
                 provider,
                 plan=plan,
-                step=step,
+                capability=step.capability,
+                risk_class=step.risk_class,
                 environment_id=environment_id,
                 principal_ref=principal_ref,
                 route=fallback.candidate_id,
@@ -114,9 +118,42 @@ async def apply_execution_policy(
                 )
             )
 
+        updated_compensation = step.compensation
+        if updated_compensation is not None and updated_compensation.capability is not None:
+            compensation_digest = _binding_digest(
+                credential_bindings,
+                tenant_id=plan.tenant_id,
+                environment_id=environment_id,
+                adapter=updated_compensation.adapter,
+                capability=updated_compensation.capability,
+            )
+            compensation_decision = await _evaluate_attempt(
+                provider,
+                plan=plan,
+                capability=updated_compensation.capability,
+                risk_class=updated_compensation.risk_class,
+                environment_id=environment_id,
+                principal_ref=principal_ref,
+                route=updated_compensation.adapter,
+                adapter=updated_compensation.adapter,
+                channel=updated_compensation.execution_channel,
+                evaluated_at=evaluated_at,
+            )
+            if compensation_decision.effect is PolicyEffect.REQUIRE_APPROVAL:
+                raise PolicyPlanningError(
+                    "compensation_approval_unsupported",
+                    "Compensation policy must allow direct bounded recovery",
+                    status_code=403,
+                )
+            compensation_decisions.append(compensation_decision)
+            updated_compensation = updated_compensation.model_copy(
+                update={"credential_binding_digest": compensation_digest}
+            )
+
         updates: dict[str, object] = {
             "credential_binding_digest": binding_digest,
             "route_fallbacks": tuple(updated_fallbacks),
+            "compensation": updated_compensation,
         }
         if approval_required:
             updates.update(
@@ -131,7 +168,9 @@ async def apply_execution_policy(
     payload.update(
         environment_id=environment_id,
         steps=tuple(updated_steps),
-        policy_decisions=tuple((*primary_decisions, *fallback_decisions)),
+        policy_decisions=tuple(
+            (*primary_decisions, *fallback_decisions, *compensation_decisions)
+        ),
     )
     try:
         return ExecutionPlan.model_validate(payload)
@@ -147,7 +186,8 @@ async def _evaluate_attempt(
     provider: PolicyProvider,
     *,
     plan: ExecutionPlan,
-    step: ExecutionStep,
+    capability: str,
+    risk_class: RiskClass,
     environment_id: str,
     principal_ref: str,
     route: str,
@@ -160,8 +200,8 @@ async def _evaluate_attempt(
             tenant_id=plan.tenant_id,
             environment_id=environment_id,
             principal_ref=principal_ref,
-            capability=step.capability,
-            risk_class=step.risk_class,
+            capability=capability,
+            risk_class=risk_class,
             data_classification=plan.data_classification,
             requested_verification_level=plan.verification_level,
             route=route,

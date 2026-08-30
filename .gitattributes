@@ -12,7 +12,7 @@
 
 # These files are checksum-pinned upstream bytes with mixed line endings.
 # Treat them as opaque so Git never rewrites their byte representation.
-third_party/dcsa/** -text
+third_party/dcsa/** -text whitespace=-blank-at-eol
 
 # Raw adapter recipe bytes are checksum-pinned and must be platform invariant.
 src/cargomesh/adapters/data/*.json text eol=lf

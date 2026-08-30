@@ -10,11 +10,18 @@ from collections.abc import Sequence
 import uvicorn
 
 from cargomesh.application.transactions import ExecutionPlanner, TransactionService
+from cargomesh.booking.local import (
+    synthetic_booking_credential_store,
+    synthetic_booking_policy_provider,
+)
+from cargomesh.booking.planner import synthetic_booking_planner
 from cargomesh.controlplane.access import AccessController
 from cargomesh.controlplane.audit import SQLiteAuditStore
 from cargomesh.controlplane.authentication import HttpJwksProvider, OIDCAuthenticator
 from cargomesh.controlplane.authorization import MembershipAuthorizer
 from cargomesh.controlplane.membership import SQLiteMembershipStore
+from cargomesh.credentials import SQLiteCredentialBindingStore
+from cargomesh.policy import PolicyProvider
 from cargomesh.routing.store import SQLiteRouteOutcomeStore
 from cargomesh.runtime.idempotency import SQLiteSubmissionStore
 from cargomesh.runtime.planner import (
@@ -72,6 +79,19 @@ def _parser() -> argparse.ArgumentParser:
         help="route outcome database shared with the worker",
     )
     parser.add_argument(
+        "--enable-synthetic-booking-binding",
+        action="store_true",
+        help="bind only the approved and verified local DCSA Booking vertical slice",
+    )
+    parser.add_argument(
+        "--synthetic-booking-tenant",
+        default=os.environ.get("CARGOMESH_SYNTHETIC_BOOKING_TENANT", "tenant-a"),
+    )
+    parser.add_argument(
+        "--synthetic-booking-environment",
+        default=os.environ.get("CARGOMESH_SYNTHETIC_BOOKING_ENVIRONMENT", "local"),
+    )
+    parser.add_argument(
         "--enforce-access-control",
         action="store_true",
         help="require OIDC authentication, server-side membership authorization, and audit",
@@ -98,8 +118,20 @@ async def serve(args: argparse.Namespace) -> None:
     routing_store: SQLiteRouteOutcomeStore | None = None
     membership_store: SQLiteMembershipStore | None = None
     audit_store: SQLiteAuditStore | None = None
+    credential_store: SQLiteCredentialBindingStore | None = None
+    policy_provider: PolicyProvider | None = None
     planner: ExecutionPlanner
-    if args.enable_synthetic_optimized_binding:
+    if args.enable_synthetic_booking_binding:
+        planner = synthetic_booking_planner()
+        credential_store = synthetic_booking_credential_store(
+            tenant_id=args.synthetic_booking_tenant,
+            environment_id=args.synthetic_booking_environment,
+        )
+        policy_provider = synthetic_booking_policy_provider(
+            tenant_id=args.synthetic_booking_tenant,
+            environment_id=args.synthetic_booking_environment,
+        )
+    elif args.enable_synthetic_optimized_binding:
         routing_store = SQLiteRouteOutcomeStore(args.routing_database)
         planner = synthetic_optimized_tracking_planner(routing_store)
     elif args.enable_synthetic_verification_binding:
@@ -112,6 +144,9 @@ async def serve(args: argparse.Namespace) -> None:
         planner=planner,
         submissions=submissions,
         gateway=TemporalExecutionGateway(client, task_queue=args.task_queue),
+        policy_provider=policy_provider,
+        policy_environment_id=args.synthetic_booking_environment,
+        credential_bindings=credential_store,
     )
     access_controller: AccessController | None = None
     if args.enforce_access_control:
@@ -148,6 +183,8 @@ async def serve(args: argparse.Namespace) -> None:
             audit_store.close()
         if membership_store is not None:
             membership_store.close()
+        if credential_store is not None:
+            credential_store.close()
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -158,13 +195,22 @@ def main(argv: Sequence[str] | None = None) -> None:
             args.enable_synthetic_adapter_binding,
             args.enable_synthetic_browser_binding,
             args.enable_synthetic_optimized_binding,
+            args.enable_synthetic_booking_binding,
         )
     )
     if binding_count != 1:
         parser.error(
             "choose exactly one explicit local binding: --enable-synthetic-adapter-binding, "
             "--enable-synthetic-browser-binding, or --enable-synthetic-optimized-binding"
+            ", or --enable-synthetic-booking-binding"
         )
+    if args.enable_synthetic_booking_binding and (
+        not args.synthetic_booking_tenant
+        or args.synthetic_booking_tenant != args.synthetic_booking_tenant.strip()
+        or not args.synthetic_booking_environment
+        or args.synthetic_booking_environment != args.synthetic_booking_environment.strip()
+    ):
+        parser.error("synthetic Booking tenant/environment configuration is invalid")
     if (
         args.enable_synthetic_verification_binding
         and not args.enable_synthetic_browser_binding

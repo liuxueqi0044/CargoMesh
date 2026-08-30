@@ -23,7 +23,7 @@ from cargomesh.ir import (
     TransactionCommand,
 )
 
-from .models import MappingDiagnostic, MappingFidelity, MappingResult
+from .models import MappingDiagnostic, MappingError, MappingFidelity, MappingResult
 
 DCSA_TNT_QUERY_VERSION = "dcsa.tnt.query/v2.3"
 
@@ -336,6 +336,20 @@ class DCSATNTV2Mapper:
 
     def from_ir(self, command: TransactionCommand) -> MappingResult[DCSATNTQueryV2]:
         diagnostics: list[MappingDiagnostic] = []
+        if not isinstance(command.subject, ShipmentSubject) or not isinstance(
+            command.parameters, TrackFilters
+        ):
+            raise MappingError(
+                (
+                    MappingDiagnostic(
+                        source_path="transaction_type",
+                        fidelity=MappingFidelity.UNSUPPORTED,
+                        code="TRANSACTION_TYPE_NOT_SUPPORTED",
+                        message="DCSA TNT mapping only accepts shipment.track transactions",
+                        blocking=True,
+                    ),
+                )
+            )
         if command.extensions:
             diagnostics.append(
                 MappingDiagnostic(

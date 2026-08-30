@@ -21,6 +21,19 @@ IR_SCHEMA_VERSION = "cargomesh.transaction/v1"
 
 Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=256)]
 ShortCode = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
+UNLocationCode = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=5,
+        max_length=5,
+        pattern=r"^[A-Z]{2}[A-Z2-9]{3}$",
+    ),
+]
+ISOEquipmentCode = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=4, max_length=4),
+]
 
 _EXTENSION_NAMESPACE = re.compile(
     r"^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+"
@@ -126,6 +139,84 @@ class TrackFilters(IRModel):
         return self
 
 
+class BookingSubject(IRModel):
+    """Explicit carrier profile selected for a booking write."""
+
+    kind: Literal["booking"] = "booking"
+    carrier_profile: Identifier
+
+
+class BookingLocation(IRModel):
+    """Minimum DCSA shipment-location subset used by the first booking slice."""
+
+    location_type_code: Literal["POL", "POD"]
+    un_location_code: UNLocationCode
+
+
+class CargoGrossWeight(IRModel):
+    value: float = Field(gt=0, le=100_000_000)
+    unit: Literal["KGM", "LBR"]
+
+
+class BookingCommodity(IRModel):
+    commodity_type: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=550)
+    ]
+
+
+class RequestedBookingEquipment(IRModel):
+    iso_equipment_code: ISOEquipmentCode
+    units: int = Field(ge=1, le=10_000)
+    is_shipper_owned: bool
+    cargo_gross_weight: CargoGrossWeight
+    commodities: tuple[BookingCommodity, ...] = Field(min_length=1, max_length=32)
+
+
+class BookingAgent(IRModel):
+    party_name: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=70)
+    ]
+
+
+class BookingParameters(IRModel):
+    """Reviewed dry-container subset of DCSA Booking 2.0.5 CreateBooking."""
+
+    receipt_type_at_origin: Literal["CY", "SD", "CFS"]
+    delivery_type_at_destination: Literal["CY", "SD", "CFS"]
+    cargo_movement_type_at_origin: Literal["FCL", "LCL"]
+    cargo_movement_type_at_destination: Literal["FCL", "LCL"]
+    service_contract_reference: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=30)
+    ] | None = None
+    extended_contract_quotation_reference: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=70)
+    ] | None = None
+    is_equipment_substitution_allowed: bool
+    shipment_locations: tuple[BookingLocation, ...] = Field(min_length=2, max_length=16)
+    requested_equipments: tuple[RequestedBookingEquipment, ...] = Field(
+        min_length=1, max_length=32
+    )
+    booking_agent: BookingAgent
+    expected_status: Literal["RECEIVED"] = "RECEIVED"
+
+    @model_validator(mode="after")
+    def validate_booking_subset(self) -> BookingParameters:
+        if (self.service_contract_reference is None) == (
+            self.extended_contract_quotation_reference is None
+        ):
+            raise ValueError(
+                "exactly one service_contract_reference or "
+                "extended_contract_quotation_reference is required"
+            )
+        location_types = [location.location_type_code for location in self.shipment_locations]
+        if location_types.count("POL") != 1 or location_types.count("POD") != 1:
+            raise ValueError("booking requires exactly one POL and exactly one POD")
+        codes = [location.un_location_code for location in self.shipment_locations]
+        if len(codes) != len(set(codes)):
+            raise ValueError("booking shipment locations must be distinct")
+        return self
+
+
 class VerificationRequirements(IRModel):
     minimum_independence_level: VerificationLevel = VerificationLevel.L1
 
@@ -136,18 +227,18 @@ class TransactionCommand(IRModel):
     schema_version: Literal["cargomesh.transaction/v1"] = "cargomesh.transaction/v1"
     transaction_id: Identifier | None = None
     tenant_id: Identifier
-    transaction_type: Literal[TransactionType.SHIPMENT_TRACK] = TransactionType.SHIPMENT_TRACK
+    transaction_type: TransactionType = TransactionType.SHIPMENT_TRACK
     external_reference: Identifier
     requested_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    subject: ShipmentSubject
-    parameters: TrackFilters = Field(default_factory=TrackFilters)
+    subject: ShipmentSubject | BookingSubject
+    parameters: TrackFilters | BookingParameters = Field(default_factory=TrackFilters)
     requested_effects: tuple[RequestedEffect, ...] = (
         RequestedEffect.LATEST_TRANSPORT_EVENTS_RETURNED,
     )
     verification_requirements: VerificationRequirements = Field(
         default_factory=VerificationRequirements
     )
-    risk_class: Literal[RiskClass.READ_ONLY] = RiskClass.READ_ONLY
+    risk_class: RiskClass = RiskClass.READ_ONLY
     required_capabilities: tuple[Capability, ...] = (Capability.SHIPMENT_TRACK_READ,)
     extensions: dict[str, JsonValue] = Field(default_factory=dict)
 
@@ -171,4 +262,46 @@ class TransactionCommand(IRModel):
             )
         if self.requested_at.tzinfo is None or self.requested_at.utcoffset() is None:
             raise ValueError("requested_at must include a timezone")
+        if self.transaction_type is TransactionType.SHIPMENT_TRACK:
+            if not isinstance(self.subject, ShipmentSubject) or not isinstance(
+                self.parameters, TrackFilters
+            ):
+                raise ValueError("shipment.track requires shipment subject and track filters")
+            if self.risk_class is not RiskClass.READ_ONLY:
+                raise ValueError("shipment.track must be READ_ONLY")
+            if self.required_capabilities != (Capability.SHIPMENT_TRACK_READ,):
+                raise ValueError("shipment.track requires shipment.track.read")
+            if self.requested_effects != (
+                RequestedEffect.LATEST_TRANSPORT_EVENTS_RETURNED,
+            ):
+                raise ValueError("shipment.track has an invalid requested effect bundle")
+        elif self.transaction_type is TransactionType.BOOKING_CREATE:
+            if not isinstance(self.subject, BookingSubject) or not isinstance(
+                self.parameters, BookingParameters
+            ):
+                raise ValueError("booking.create requires booking subject and parameters")
+            if self.risk_class is not RiskClass.CONSEQUENTIAL_WRITE:
+                raise ValueError("booking.create must be CONSEQUENTIAL_WRITE")
+            expected_capabilities = (
+                Capability.BOOKING_DRAFT_PREPARE,
+                Capability.BOOKING_SUBMIT,
+            )
+            if self.required_capabilities != expected_capabilities:
+                raise ValueError("booking.create has an invalid capability bundle")
+            expected_effects = (
+                RequestedEffect.BOOKING_REQUEST_ACCEPTED,
+                RequestedEffect.BOOKING_RECEIVED_VERIFIED,
+            )
+            if self.requested_effects != expected_effects:
+                raise ValueError("booking.create has an invalid requested effect bundle")
+            verification_rank = {
+                VerificationLevel.L0: 0,
+                VerificationLevel.L1: 1,
+                VerificationLevel.L2: 2,
+                VerificationLevel.L3: 3,
+            }
+            if verification_rank[
+                self.verification_requirements.minimum_independence_level
+            ] < verification_rank[VerificationLevel.L2]:
+                raise ValueError("booking.create requires verification level L2 or higher")
         return self

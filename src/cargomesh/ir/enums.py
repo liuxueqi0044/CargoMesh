@@ -5,14 +5,20 @@ from enum import StrEnum
 
 class TransactionType(StrEnum):
     SHIPMENT_TRACK = "shipment.track"
+    BOOKING_CREATE = "booking.create"
 
 
 class Capability(StrEnum):
     SHIPMENT_TRACK_READ = "shipment.track.read"
+    BOOKING_DRAFT_PREPARE = "booking.draft.prepare"
+    BOOKING_SUBMIT = "booking.submit"
+    BOOKING_CANCEL = "booking.cancel"
 
 
 class RequestedEffect(StrEnum):
     LATEST_TRANSPORT_EVENTS_RETURNED = "latest_transport_events_returned"
+    BOOKING_REQUEST_ACCEPTED = "booking_request_accepted"
+    BOOKING_RECEIVED_VERIFIED = "booking_received_verified"
 
 
 class RiskClass(StrEnum):

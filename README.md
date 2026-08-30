@@ -20,6 +20,10 @@ Activity that invokes a credential-aware adapter.
 Board 8 supplies an offline Private Runner reference boundary for one-time
 enrollment, pinned identity, fenced task leases, heartbeat recovery, artifact
 relay, sandbox declarations, and signed-release policy.
+Board 9 adds one explicitly synthetic DCSA Booking 2.0.5 write slice with a
+typed dry-container IR, mandatory approval, tenant policy, credential-scoped
+submit/cancel, single-attempt unknown-effect reconciliation, and independent
+ledger verification.
 
 Execution without a configured verifier remains deliberately named
 `EXECUTED_UNVERIFIED`. Only a separate evidence collector can produce
@@ -63,9 +67,11 @@ evidence becomes `HALTED`.
 | Private Runner identity | One-time hashed enrollment challenges, pinned public-key digests, scoped queues, revocation and health state |
 | Runner task transport | Atomic SQLite acquisition, monotonic fencing, bounded heartbeat, conservative recovery and idempotent receipts |
 | Runner execution policy | Artifact relay, sandbox/egress/session contracts, SemVer compatibility and non-overclaiming deployment profiles |
+| Verified Booking write | Pinned DCSA 2.0.5 subset, approval, idempotent synthetic submit, L2 ledger read-back and reference-bound cancellation |
 
-The first accepted capability remains `shipment.track.read`. Board 3 supplies a
-synthetic API and browser adapters, not real carrier integrations. Boards 6–7
+The accepted execution demonstrations are `shipment.track.read` and the
+explicitly synthetic `booking.create` vertical slice. Board 3 supplies a
+synthetic API and browser adapters, not real carrier integrations. Boards 6–9
 supply single-node production-style access, policy, and credential boundaries;
 identity-provider/Vault/OPA hosting, EDI/human executors, management APIs, and a
 distributed control-plane database belong to later boards.
@@ -239,6 +245,31 @@ Use `cargomesh-synthetic-api --variant server_error`, `malformed`, or
 `not_found` to exercise fallback and fail-closed response validation. Board 4's
 separate `synthetic.ledger` collector can verify either execution path and can
 reach L2 when the submitted IR requires L2.
+
+### Board 9 verified synthetic Booking path
+
+The Booking slice never contacts a real carrier. Start the Temporal development
+server, then run the synthetic carrier, its separate ledger, the worker and the
+runtime API in separate terminals:
+
+```powershell
+uv run cargomesh-synthetic-booking-carrier
+uv run cargomesh-synthetic-booking-ledger
+uv run cargomesh-worker --enable-synthetic-booking-adapter --enable-synthetic-booking-verifier
+uv run cargomesh-runtime-api --enable-synthetic-booking-binding
+```
+
+Both synthetic services share `synthetic-booking.sqlite3`. The local policy is
+restricted to tenant `tenant-a` and environment `local` by default; matching
+scope overrides must be supplied to both worker and API. Submit a complete
+`cargomesh.transaction/v1` `booking.create` command, then approve its
+`submit-booking` step through the normal approval endpoint. The write has one
+attempt only. If the result is indeterminate, CargoMesh reads the independent
+ledger instead of resubmitting or guessing a cancellation.
+
+This reference path uses an in-memory, clearly synthetic credential provider.
+It is not a carrier certification, production credential configuration, or
+permission to automate a third-party service.
 
 ### Board 6 access-control boundary
 

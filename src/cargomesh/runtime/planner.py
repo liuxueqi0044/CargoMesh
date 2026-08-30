@@ -8,7 +8,7 @@ from typing import Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, JsonValue
 
-from cargomesh.ir import TransactionCommand
+from cargomesh.ir import ShipmentSubject, TransactionCommand
 from cargomesh.ir.enums import RiskClass, VerificationLevel
 from cargomesh.routing.engine import select_route
 from cargomesh.routing.models import (
@@ -383,6 +383,8 @@ def _synthetic_tracking_verification(command: TransactionCommand) -> Verificatio
         is VerificationLevel.L0
     ):
         return None
+    if not isinstance(command.subject, ShipmentSubject):
+        raise MissingCapabilityBinding("verification.shipment.subject")
     reference = command.subject.carrier_booking_reference
     if reference is None:
         raise MissingCapabilityBinding("verification.shipment.carrier_booking_reference")

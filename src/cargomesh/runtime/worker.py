@@ -17,6 +17,17 @@ from cargomesh.adapters.http_api import (
     SyntheticTrackingHttpAdapterConfig,
 )
 from cargomesh.adapters.package import load_builtin_synthetic_package
+from cargomesh.booking.adapter import BookingHttpAdapter, BookingHttpAdapterConfig
+from cargomesh.booking.draft import BookingDraftAdapter
+from cargomesh.booking.evidence import (
+    BookingEvidenceCollector,
+    BookingEvidenceCollectorConfig,
+)
+from cargomesh.booking.local import (
+    synthetic_booking_credential_store,
+    synthetic_booking_secret_provider,
+)
+from cargomesh.credentials import SQLiteCredentialBindingStore
 from cargomesh.routing.store import SQLiteRouteOutcomeStore
 from cargomesh.verification.activities import VerificationActivities
 from cargomesh.verification.collectors import EvidenceCollectorRegistry
@@ -104,6 +115,34 @@ def _parser() -> argparse.ArgumentParser:
         ),
         help="append-only SQLite evidence receipt database",
     )
+    parser.add_argument(
+        "--enable-synthetic-booking-adapter",
+        action="store_true",
+        help="enable the credential-scoped local DCSA Booking demo adapter",
+    )
+    parser.add_argument(
+        "--synthetic-booking-url",
+        default=os.environ.get("CARGOMESH_SYNTHETIC_BOOKING_URL", "http://127.0.0.1:8091"),
+    )
+    parser.add_argument(
+        "--enable-synthetic-booking-verifier",
+        action="store_true",
+        help="enable the separate local synthetic Booking ledger collector",
+    )
+    parser.add_argument(
+        "--synthetic-booking-ledger-url",
+        default=os.environ.get(
+            "CARGOMESH_SYNTHETIC_BOOKING_LEDGER_URL", "http://127.0.0.1:8092"
+        ),
+    )
+    parser.add_argument(
+        "--synthetic-booking-tenant",
+        default=os.environ.get("CARGOMESH_SYNTHETIC_BOOKING_TENANT", "tenant-a"),
+    )
+    parser.add_argument(
+        "--synthetic-booking-environment",
+        default=os.environ.get("CARGOMESH_SYNTHETIC_BOOKING_ENVIRONMENT", "local"),
+    )
     return parser
 
 
@@ -123,6 +162,12 @@ async def run_worker(
     enable_synthetic_verifier: bool = False,
     synthetic_evidence_url: str = "http://127.0.0.1:8766",
     evidence_database: Path | str = "cargomesh-evidence.sqlite3",
+    enable_synthetic_booking_adapter: bool = False,
+    synthetic_booking_url: str = "http://127.0.0.1:8091",
+    enable_synthetic_booking_verifier: bool = False,
+    synthetic_booking_ledger_url: str = "http://127.0.0.1:8092",
+    synthetic_booking_tenant: str = "tenant-a",
+    synthetic_booking_environment: str = "local",
 ) -> None:
     registry = AdapterRegistry()
     evidence_collectors = EvidenceCollectorRegistry()
@@ -133,13 +178,23 @@ async def run_worker(
                 SyntheticLedgerHttpCollectorConfig(synthetic_evidence_url)
             ),
         )
+    if enable_synthetic_booking_verifier:
+        evidence_collectors.register(
+            "synthetic.booking.ledger",
+            BookingEvidenceCollector(
+                BookingEvidenceCollectorConfig(synthetic_booking_ledger_url)
+            ),
+        )
     evidence_store = SQLiteEvidenceStore(
-        evidence_database if enable_synthetic_verifier else ":memory:"
+        evidence_database
+        if enable_synthetic_verifier or enable_synthetic_booking_verifier
+        else ":memory:"
     )
     outcome_store = (
         SQLiteRouteOutcomeStore(routing_database) if enable_routing_outcomes else None
     )
     browser_adapter: PlaywrightBrowserAdapter | None = None
+    credential_store: SQLiteCredentialBindingStore | None = None
     try:
         if enable_synthetic_adapter:
             registry.register("synthetic.track", SyntheticTrackingAdapter())
@@ -149,6 +204,16 @@ async def run_worker(
                 SyntheticTrackingHttpAdapter(
                     SyntheticTrackingHttpAdapterConfig(synthetic_api_url)
                 ),
+            )
+        if enable_synthetic_booking_adapter:
+            registry.register("synthetic.booking.draft", BookingDraftAdapter())
+            registry.register_credential_aware(
+                "synthetic.booking.api",
+                BookingHttpAdapter(BookingHttpAdapterConfig(synthetic_booking_url)),
+            )
+            credential_store = synthetic_booking_credential_store(
+                tenant_id=synthetic_booking_tenant,
+                environment_id=synthetic_booking_environment,
             )
         if enable_synthetic_browser_adapter:
             artifact_sink = (
@@ -170,6 +235,12 @@ async def run_worker(
         activities = AdapterActivities(
             registry,
             outcome_store=outcome_store,
+            credential_bindings=credential_store,
+            secret_providers=(
+                {"memory": synthetic_booking_secret_provider()}
+                if enable_synthetic_booking_adapter
+                else None
+            ),
         )
         verification_activities = VerificationActivities(
             evidence_collectors, evidence_store
@@ -188,6 +259,8 @@ async def run_worker(
         evidence_store.close()
         if outcome_store is not None:
             outcome_store.close()
+        if credential_store is not None:
+            credential_store.close()
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -208,5 +281,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             enable_synthetic_verifier=args.enable_synthetic_verifier,
             synthetic_evidence_url=args.synthetic_evidence_url,
             evidence_database=args.evidence_database,
+            enable_synthetic_booking_adapter=args.enable_synthetic_booking_adapter,
+            synthetic_booking_url=args.synthetic_booking_url,
+            enable_synthetic_booking_verifier=args.enable_synthetic_booking_verifier,
+            synthetic_booking_ledger_url=args.synthetic_booking_ledger_url,
+            synthetic_booking_tenant=args.synthetic_booking_tenant,
+            synthetic_booking_environment=args.synthetic_booking_environment,
         )
     )
