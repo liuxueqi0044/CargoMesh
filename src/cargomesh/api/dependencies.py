@@ -8,6 +8,7 @@ from fastapi import Request
 
 from cargomesh.application.compile import CompilationResult, CompileService
 from cargomesh.application.reference_data import ReferenceDataService
+from cargomesh.controlplane.access import AccessController
 
 
 class TransactionServiceProtocol(Protocol):
@@ -37,3 +38,7 @@ def get_reference_data_service(request: Request) -> ReferenceDataService:
 
 def get_transaction_service(request: Request) -> TransactionServiceProtocol | None:
     return cast(TransactionServiceProtocol | None, request.app.state.transaction_service)
+
+
+def get_access_controller(request: Request) -> AccessController | None:
+    return cast(AccessController | None, request.app.state.access_controller)

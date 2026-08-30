@@ -14,6 +14,7 @@ from starlette.responses import JSONResponse, Response
 from cargomesh import __version__
 from cargomesh.api.dependencies import (
     TransactionServiceProtocol,
+    get_access_controller,
     get_compile_service,
     get_reference_data_service,
     get_transaction_service,
@@ -29,6 +30,8 @@ from cargomesh.application.compile import CompilationError, CompileService, json
 from cargomesh.application.reference_data import (
     ReferenceDataService,
 )
+from cargomesh.controlplane import AccessAction, Principal
+from cargomesh.controlplane.access import AccessControlError, AccessController, AccessGrant
 from cargomesh.standards import default_reference_data_catalog
 
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
@@ -58,10 +61,13 @@ def _runtime_error_response(request: Request, exc: Exception) -> JSONResponse:
     raw_status = getattr(exc, "status_code", 500)
     status_code = raw_status if isinstance(raw_status, int) and 400 <= raw_status <= 599 else 500
     request_id = getattr(request.state, "request_id", "unknown")
+    headers = {"X-Request-ID": request_id}
+    if bool(getattr(exc, "authenticate_header", False)):
+        headers["WWW-Authenticate"] = "Bearer"
     return JSONResponse(
         status_code=status_code,
         content={"error": {"code": code, "message": message, "request_id": request_id}},
-        headers={"X-Request-ID": request_id},
+        headers=headers,
     )
 
 
@@ -103,15 +109,92 @@ def _submission_was_replayed(value: Any) -> bool:
     )
 
 
+async def _authenticate_request(
+    request: Request, controller: AccessController | None
+) -> Principal | None:
+    if controller is None:
+        return None
+    return await controller.authenticate(request.headers.get("Authorization"))
+
+
+def _resource_tenant_id(value: Any) -> str:
+    candidate = (
+        value.get("tenant_id")
+        if isinstance(value, dict)
+        else getattr(value, "tenant_id", None)
+    )
+    if not isinstance(candidate, str) or not candidate or candidate != candidate.strip():
+        raise AccessControlError(
+            "resource_scope_unavailable",
+            "Resource authorization scope is unavailable",
+            status_code=503,
+        )
+    return candidate
+
+
+def _require_access(
+    request: Request,
+    controller: AccessController | None,
+    principal: Principal | None,
+    *,
+    action: AccessAction,
+    tenant_id: str,
+    resource_id: str | None,
+) -> AccessGrant | None:
+    if controller is None:
+        return None
+    if principal is None:
+        raise AccessControlError(
+            "authentication_required",
+            "Bearer authentication is required",
+            status_code=401,
+            authenticate_header=True,
+        )
+    return controller.require(
+        principal,
+        action=action,
+        tenant_id=tenant_id,
+        resource_type="transaction",
+        resource_id=resource_id,
+        request_id=getattr(request.state, "request_id", "unknown"),
+    )
+
+
+def _record_access_outcome(
+    controller: AccessController | None,
+    grant: AccessGrant | None,
+    *,
+    succeeded: bool,
+    reason_code: str,
+    details: dict[str, str | int | bool | None] | None = None,
+) -> None:
+    if controller is not None and grant is not None:
+        controller.record_outcome(
+            grant,
+            succeeded=succeeded,
+            reason_code=reason_code,
+            details=details,
+        )
+
+
+def _bounded_runtime_reason(exc: Exception) -> str:
+    raw_code = getattr(exc, "code", "runtime_error")
+    if isinstance(raw_code, str) and _SAFE_ERROR_CODE_RE.fullmatch(raw_code):
+        return raw_code
+    return "runtime_error"
+
+
 def create_app(
     *,
     compile_service: CompileService | None = None,
     reference_data_provider: Any | None = None,
     transaction_service: TransactionServiceProtocol | None = None,
+    access_controller: AccessController | None = None,
 ) -> FastAPI:
     application = FastAPI(title="CargoMesh API", version=__version__)
     application.state.compile_service = compile_service or CompileService()
     application.state.transaction_service = transaction_service
+    application.state.access_controller = access_controller
     application.state.reference_data_service = ReferenceDataService(
         reference_data_provider
         if reference_data_provider is not None
@@ -171,7 +254,12 @@ def create_app(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         compiler: CompileService = Depends(get_compile_service),  # noqa: B008
         service: TransactionServiceProtocol | None = Depends(get_transaction_service),  # noqa: B008
+        controller: AccessController | None = Depends(get_access_controller),  # noqa: B008
     ) -> Response:
+        try:
+            principal = await _authenticate_request(request, controller)
+        except AccessControlError as exc:
+            return _runtime_error_response(request, exc)
         if idempotency_key is None:
             return _runtime_error_response(
                 request,
@@ -190,20 +278,60 @@ def create_app(
                     400,
                 ),
             )
-        if service is None:
-            return _runtime_unavailable(request)
+        grant: AccessGrant | None = None
         try:
             compilation = compiler.compile(
                 body.source_schema_version,
                 body.payload,
                 context=body.context,
             )
+            if controller is not None:
+                tenant_id = _resource_tenant_id(compilation.command)
+                grant = _require_access(
+                    request,
+                    controller,
+                    principal,
+                    action=AccessAction.TRANSACTION_CREATE,
+                    tenant_id=tenant_id,
+                    resource_id=None,
+                )
+            if service is None:
+                _record_access_outcome(
+                    controller,
+                    grant,
+                    succeeded=False,
+                    reason_code="runtime_unavailable",
+                )
+                return _runtime_unavailable(request)
             result = await service.submit(compilation, idempotency_key)
         except CompilationError:
             raise
+        except AccessControlError as exc:
+            return _runtime_error_response(request, exc)
         except Exception as exc:
+            try:
+                _record_access_outcome(
+                    controller,
+                    grant,
+                    succeeded=False,
+                    reason_code=_bounded_runtime_reason(exc),
+                )
+            except AccessControlError as audit_exc:
+                return _runtime_error_response(request, audit_exc)
             return _runtime_error_response(request, exc)
         status_code = 200 if _submission_was_replayed(result) else 202
+        try:
+            _record_access_outcome(
+                controller,
+                grant,
+                succeeded=True,
+                reason_code=(
+                    "transaction_replayed" if status_code == 200 else "transaction_created"
+                ),
+                details={"replayed": status_code == 200},
+            )
+        except AccessControlError as exc:
+            return _runtime_error_response(request, exc)
         return JSONResponse(status_code=status_code, content=jsonable(result))
 
     @application.get("/v1/transactions/{transaction_id}")
@@ -211,11 +339,34 @@ def create_app(
         request: Request,
         transaction_id: str,
         service: TransactionServiceProtocol | None = Depends(get_transaction_service),  # noqa: B008
+        controller: AccessController | None = Depends(get_access_controller),  # noqa: B008
     ) -> Response:
+        try:
+            principal = await _authenticate_request(request, controller)
+        except AccessControlError as exc:
+            return _runtime_error_response(request, exc)
         if service is None:
             return _runtime_unavailable(request)
         try:
             result = await service.get(transaction_id)
+            grant = None
+            if controller is not None:
+                grant = _require_access(
+                    request,
+                    controller,
+                    principal,
+                    action=AccessAction.TRANSACTION_READ,
+                    tenant_id=_resource_tenant_id(result),
+                    resource_id=transaction_id,
+                )
+            _record_access_outcome(
+                controller,
+                grant,
+                succeeded=True,
+                reason_code="transaction_read",
+            )
+        except AccessControlError as exc:
+            return _runtime_error_response(request, exc)
         except Exception as exc:
             return _runtime_error_response(request, exc)
         return JSONResponse(status_code=200, content=jsonable(result))
@@ -226,12 +377,54 @@ def create_app(
         transaction_id: str,
         decision: ApprovalRequest,
         service: TransactionServiceProtocol | None = Depends(get_transaction_service),  # noqa: B008
+        controller: AccessController | None = Depends(get_access_controller),  # noqa: B008
     ) -> Response:
+        try:
+            principal = await _authenticate_request(request, controller)
+        except AccessControlError as exc:
+            return _runtime_error_response(request, exc)
         if service is None:
             return _runtime_unavailable(request)
+        grant: AccessGrant | None = None
         try:
+            if controller is not None:
+                existing = await service.get(transaction_id)
+                grant = _require_access(
+                    request,
+                    controller,
+                    principal,
+                    action=AccessAction.TRANSACTION_APPROVE,
+                    tenant_id=_resource_tenant_id(existing),
+                    resource_id=transaction_id,
+                )
+                if principal is None:
+                    raise AccessControlError(
+                        "authentication_required",
+                        "Bearer authentication is required",
+                        status_code=401,
+                        authenticate_header=True,
+                    )
+                decision = decision.model_copy(update={"decided_by": principal.subject})
             result = await service.approve(transaction_id, decision)
+            _record_access_outcome(
+                controller,
+                grant,
+                succeeded=True,
+                reason_code="approval_delivered",
+                details={"approved": decision.approved},
+            )
+        except AccessControlError as exc:
+            return _runtime_error_response(request, exc)
         except Exception as exc:
+            try:
+                _record_access_outcome(
+                    controller,
+                    grant,
+                    succeeded=False,
+                    reason_code=_bounded_runtime_reason(exc),
+                )
+            except AccessControlError as audit_exc:
+                return _runtime_error_response(request, audit_exc)
             return _runtime_error_response(request, exc)
         return JSONResponse(status_code=200, content=jsonable(result))
 
@@ -240,12 +433,45 @@ def create_app(
         request: Request,
         transaction_id: str,
         service: TransactionServiceProtocol | None = Depends(get_transaction_service),  # noqa: B008
+        controller: AccessController | None = Depends(get_access_controller),  # noqa: B008
     ) -> Response:
+        try:
+            principal = await _authenticate_request(request, controller)
+        except AccessControlError as exc:
+            return _runtime_error_response(request, exc)
         if service is None:
             return _runtime_unavailable(request)
+        grant: AccessGrant | None = None
         try:
+            if controller is not None:
+                existing = await service.get(transaction_id)
+                grant = _require_access(
+                    request,
+                    controller,
+                    principal,
+                    action=AccessAction.TRANSACTION_CANCEL,
+                    tenant_id=_resource_tenant_id(existing),
+                    resource_id=transaction_id,
+                )
             result = await service.cancel(transaction_id)
+            _record_access_outcome(
+                controller,
+                grant,
+                succeeded=True,
+                reason_code="cancellation_delivered",
+            )
+        except AccessControlError as exc:
+            return _runtime_error_response(request, exc)
         except Exception as exc:
+            try:
+                _record_access_outcome(
+                    controller,
+                    grant,
+                    succeeded=False,
+                    reason_code=_bounded_runtime_reason(exc),
+                )
+            except AccessControlError as audit_exc:
+                return _runtime_error_response(request, audit_exc)
             return _runtime_error_response(request, exc)
         return JSONResponse(status_code=200, content=jsonable(result))
 

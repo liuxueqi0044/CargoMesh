@@ -11,6 +11,9 @@ Board 4 collects separately sourced evidence, persists immutable receipts, and
 produces deterministic, digest-protected verification reports.
 Board 5 selects among API, EDI, browser, and attended paths using digest-bound
 policy, outcome-derived health, integer scoring, and audited read-only fallback.
+Board 6 verifies externally issued OIDC tokens, resolves tenant/environment
+membership from CargoMesh-owned data, applies a fixed RBAC matrix, and writes
+append-only per-tenant audit hash chains.
 
 Execution without a configured verifier remains deliberately named
 `EXECUTED_UNVERIFIED`. Only a separate evidence collector can produce
@@ -45,11 +48,16 @@ evidence becomes `HALTED`.
 | Route health | Append-only tenant-scoped outcomes, rolling p95/success metrics and cooldown circuits |
 | Safe fallback | Workflow-frozen alternatives; read-only and explicit safe error codes only |
 | Synthetic API path | Strict bounded HTTP adapter plus healthy and controlled-fault local service |
+| OIDC boundary | RS256 allowlist, exact issuer/audience, bounded HTTPS JWKS retrieval and one unknown-key refresh |
+| Tenant RBAC | Server-owned memberships for six transaction/control-plane actions with fail-closed provider handling |
+| Security audit | Bounded immutable events in independent tenant hash chains with replay and tamper detection |
+| Protected runtime | Explicit opt-in 401/403/404 enforcement and verified approval actors; local mode stays compatible |
 
 The first accepted capability remains `shipment.track.read`. Board 3 supplies a
-synthetic API and browser adapters, not real carrier integrations. Production
-authentication/authorization, EDI/human executors, and a distributed
-control-plane database belong to later boards.
+synthetic API and browser adapters, not real carrier integrations. Board 6
+supplies a single-node production-style authentication/authorization boundary;
+identity-provider hosting, EDI/human executors, management APIs, and a
+distributed control-plane database belong to later boards.
 
 ## Quick start
 
@@ -221,6 +229,38 @@ Use `cargomesh-synthetic-api --variant server_error`, `malformed`, or
 separate `synthetic.ledger` collector can verify either execution path and can
 reach L2 when the submitted IR requires L2.
 
+### Board 6 access-control boundary
+
+Local development remains unchanged when access control is absent. To enable
+enforcement, configure all six values and pass the explicit flag:
+
+```powershell
+$env:CARGOMESH_OIDC_ISSUER = "https://identity.example"
+$env:CARGOMESH_OIDC_AUDIENCE = "cargomesh"
+$env:CARGOMESH_OIDC_JWKS_URL = "https://identity.example/.well-known/jwks.json"
+$env:CARGOMESH_ENVIRONMENT_ID = "production"
+$env:CARGOMESH_MEMBERSHIP_DATABASE = "cargomesh-memberships.sqlite3"
+$env:CARGOMESH_AUDIT_DATABASE = "cargomesh-audit.sqlite3"
+
+uv run cargomesh-runtime-api `
+  --enable-synthetic-optimized-binding `
+  --enforce-access-control
+```
+
+CargoMesh does not host login pages, store passwords, or mint user tokens. The
+configured identity provider signs access tokens; CargoMesh ignores tenant and
+role claims and resolves authority from `SQLiteMembershipStore`. Memberships
+must be provisioned by trusted deployment/bootstrap code before enforcement is
+used. The public `TenantMembership.issue()` and `SQLiteMembershipStore.provision()`
+interfaces are the current bootstrap surface; an authenticated management API
+is intentionally deferred.
+
+Missing/invalid bearer credentials return 401. A principal outside the resource
+tenant sees 404, while an in-tenant role without the action sees 403. Protected
+requests write authorization and outcome events to the audit ledger; an audit
+or membership-provider failure prevents the operation. Use
+`SQLiteAuditStore.verify_chain(tenant_id)` to detect the first damaged record.
+
 Submit a compiled IR or DCSA TNT source using the same body accepted by the
 compiler endpoint:
 
@@ -255,6 +295,7 @@ src/cargomesh/
 ├─ adapters/        versioned packages, restricted browser executor and synthetic portal
 ├─ api/             FastAPI transport and safe error envelopes
 ├─ application/     compile and reference-data use cases
+├─ controlplane/    OIDC principals, tenant RBAC, access orchestration and audit chains
 ├─ ir/              Transaction IR, canonicalization and migrations
 ├─ mapping/         DCSA TNT mapper, diagnostics and registry
 ├─ routing/         execution candidates, policy ranking, outcomes and circuit health

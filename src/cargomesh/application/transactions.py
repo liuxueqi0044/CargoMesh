@@ -52,6 +52,7 @@ class TransactionServiceError(RuntimeError):
 class TransactionSubmission(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    tenant_id: str
     transaction_id: str
     workflow_id: str
     submission_state: SubmissionState
@@ -61,6 +62,7 @@ class TransactionSubmission(BaseModel):
 class TransactionView(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    tenant_id: str
     transaction_id: str
     workflow_id: str
     submission_state: SubmissionState
@@ -138,6 +140,7 @@ class TransactionService:
 
         started = self._submissions.mark_started(reservation.transaction_id)
         return TransactionSubmission(
+            tenant_id=started.tenant_id,
             transaction_id=started.transaction_id,
             workflow_id=started.workflow_id,
             submission_state=started.state,
@@ -224,6 +227,7 @@ def _workflow_id(tenant_id: str, transaction_id: str) -> str:
 
 def _submission_result(reservation: SubmissionReservation) -> TransactionSubmission:
     return TransactionSubmission(
+        tenant_id=reservation.tenant_id,
         transaction_id=reservation.transaction_id,
         workflow_id=reservation.workflow_id,
         submission_state=reservation.state,
@@ -235,6 +239,7 @@ def _view(
     reservation: SubmissionReservation, *, snapshot: ExecutionSnapshot | None = None
 ) -> TransactionView:
     return TransactionView(
+        tenant_id=reservation.tenant_id,
         transaction_id=reservation.transaction_id,
         workflow_id=reservation.workflow_id,
         submission_state=reservation.state,

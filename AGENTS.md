@@ -49,9 +49,17 @@ Board 5 implements:
 - audited read-only fallback on explicit safe error codes only;
 - separate synthetic API and browser paths verified through the Board 4 ledger.
 
+Board 6 implements:
+
+- externally issued OIDC access-token verification with bounded JWKS retrieval;
+- server-owned tenant/environment memberships and a fixed fail-closed RBAC matrix;
+- opt-in enforcement on transaction create/read/approve/cancel operations;
+- verified approval actors and cross-tenant resource hiding;
+- append-only, tenant-independent SQLite audit hash chains.
+
 It does not implement real carrier credentials/adapters, AI repair, route
-optimization, production authentication/authorization, or a
-horizontally-scaled SQL control plane yet.
+optimization, an identity provider/login UI, control-plane management APIs, or
+a horizontally-scaled SQL control plane yet.
 
 ## Dependency rules
 
@@ -73,6 +81,13 @@ horizontally-scaled SQL control plane yet.
   policy, databases, or clocks to recompute a route during replay.
 - Automatic fallback is forbidden for effectful steps and for undeclared failure codes.
 - Routing outcome stores must not persist transaction input, adapter output, or secrets.
+- `cargomesh.controlplane.models` and the authorization evaluator are pure domain code;
+  they must not import FastAPI, HTTP/JWT clients, Temporal, Playwright, or SQLite.
+- Bearer tokens may exist only at the authentication boundary and must never enter
+  memberships, decisions, audit events, logs, workflow inputs, or error messages.
+- Tenant/environment/role authority comes only from the server-side membership store;
+  token claims and request bodies are not authorization sources.
+- Protected writes fail closed when membership or audit providers are unavailable.
 - `cargomesh.api` may depend on IR, mapping, and standards public interfaces.
 - Tests must not require internet access. Network synchronization is tested through injected transports or local fixtures.
 
