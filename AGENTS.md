@@ -57,9 +57,17 @@ Board 6 implements:
 - verified approval actors and cross-tenant resource hiding;
 - append-only, tenant-independent SQLite audit hash chains.
 
-It does not implement real carrier credentials/adapters, AI repair, route
-optimization, an identity provider/login UI, control-plane management APIs, or
-a horizontally-scaled SQL control plane yet.
+Board 7 implements:
+
+- immutable, payload-free execution-policy inputs, rules, sets, and decisions;
+- deterministic embedded evaluation and a strict fail-closed OPA-shaped HTTPS provider;
+- policy decisions and approval requirements frozen before Workflow start;
+- tenant/environment/adapter/capability-scoped opaque credential bindings;
+- worker-only ephemeral secret resolution with best-effort buffer wiping.
+
+It does not implement real carrier credentials/adapters, AI repair, an identity
+provider/login UI, control-plane management APIs, hosted OPA/Vault, or a
+horizontally-scaled SQL control plane yet.
 
 ## Dependency rules
 
@@ -88,6 +96,13 @@ a horizontally-scaled SQL control plane yet.
 - Tenant/environment/role authority comes only from the server-side membership store;
   token claims and request bodies are not authorization sources.
 - Protected writes fail closed when membership or audit providers are unavailable.
+- Policy providers receive metadata only. Transaction payloads and credentials may
+  never enter a policy input or decision.
+- Every primary and fallback attempt must have an allowed frozen policy decision;
+  Workflows never call policy services or credential stores.
+- Secret values may exist only in short-lived worker-side leases. Workflow inputs,
+  plans, databases, logs, diagnostics, adapter results, and exceptions contain only
+  opaque references or digests.
 - `cargomesh.api` may depend on IR, mapping, and standards public interfaces.
 - Tests must not require internet access. Network synchronization is tested through injected transports or local fixtures.
 

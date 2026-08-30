@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import uuid
 from typing import Any, cast
@@ -184,6 +185,15 @@ def _bounded_runtime_reason(exc: Exception) -> str:
     return "runtime_error"
 
 
+def _policy_principal_ref(principal: Principal | None) -> str:
+    """Return an opaque stable principal identifier without exposing identity claims."""
+
+    if principal is None:
+        return "runtime.service"
+    material = f"{principal.issuer}\0{principal.subject}".encode()
+    return "principal.sha256." + hashlib.sha256(material).hexdigest()
+
+
 def create_app(
     *,
     compile_service: CompileService | None = None,
@@ -303,7 +313,15 @@ def create_app(
                     reason_code="runtime_unavailable",
                 )
                 return _runtime_unavailable(request)
-            result = await service.submit(compilation, idempotency_key)
+            contextual_submit = getattr(service, "submit_with_context", None)
+            if callable(contextual_submit):
+                result = await contextual_submit(
+                    compilation,
+                    idempotency_key,
+                    principal_ref=_policy_principal_ref(principal),
+                )
+            else:
+                result = await service.submit(compilation, idempotency_key)
         except CompilationError:
             raise
         except AccessControlError as exc:

@@ -92,6 +92,7 @@ class CargoMeshTransactionWorkflow:
             transaction_id=plan.transaction_id,
             workflow_id=workflow.info().workflow_id,
             routing_decisions=plan.routing_decisions,
+            policy_decisions=plan.policy_decisions,
         )
         self._set_status(ExecutionStatus.RUNNING)
         completed_steps: list[ExecutionStep] = []
@@ -252,6 +253,7 @@ class CargoMeshTransactionWorkflow:
                 step.timeout_seconds,
                 step.retry,
                 step.fallback_on_error_codes,
+                step.credential_binding_digest,
             ),
             *(
                 (
@@ -261,21 +263,31 @@ class CargoMeshTransactionWorkflow:
                     fallback.timeout_seconds,
                     fallback.retry,
                     fallback.fallback_on_error_codes,
+                    fallback.credential_binding_digest,
                 )
                 for fallback in step.route_fallbacks
             ),
         ]
-        for index, (candidate_id, adapter, operation, timeout, retry, safe_codes) in enumerate(
-            alternatives
-        ):
+        for index, (
+            candidate_id,
+            adapter,
+            operation,
+            timeout,
+            retry,
+            safe_codes,
+            credential_binding_digest,
+        ) in enumerate(alternatives):
             invocation = AdapterInvocation(
                 transaction_id=plan.transaction_id,
                 tenant_id=plan.tenant_id,
+                environment_id=plan.environment_id,
                 step_id=step.step_id,
+                capability=step.capability,
                 adapter=adapter,
                 operation=operation,
                 input=step.input,
                 route_candidate_id=candidate_id,
+                credential_binding_digest=credential_binding_digest,
             )
             try:
                 result = await workflow.execute_activity(
@@ -341,6 +353,7 @@ class CargoMeshTransactionWorkflow:
                 invocation = AdapterInvocation(
                     transaction_id=plan.transaction_id,
                     tenant_id=plan.tenant_id,
+                    environment_id=plan.environment_id,
                     step_id=step.step_id,
                     adapter=compensation.adapter,
                     operation=compensation.operation,

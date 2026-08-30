@@ -9,7 +9,13 @@ from typing import Annotated, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, model_validator
 
 from cargomesh.ir.enums import RiskClass, VerificationLevel
-from cargomesh.routing.models import RouteAttemptStatus, RouteDecision
+from cargomesh.policy.models import PolicyDecision, PolicyEffect
+from cargomesh.routing.models import (
+    DataClassification,
+    ExecutionChannel,
+    RouteAttemptStatus,
+    RouteDecision,
+)
 from cargomesh.verification.models import (
     ExecutionSource,
     VerificationPlan,
@@ -109,6 +115,8 @@ class RouteFallbackSpec(RuntimeModel):
     timeout_seconds: int = Field(default=60, ge=1, le=86400)
     retry: RetryPolicySpec = Field(default_factory=RetryPolicySpec)
     fallback_on_error_codes: tuple[RuntimeName, ...] = ()
+    execution_channel: ExecutionChannel = ExecutionChannel.API
+    credential_binding_digest: str | None = None
 
     @model_validator(mode="after")
     def validate_fallback(self) -> RouteFallbackSpec:
@@ -116,6 +124,9 @@ class RouteFallbackSpec(RuntimeModel):
             set(self.fallback_on_error_codes)
         ):
             raise ValueError("fallback error codes must not contain duplicates")
+        _validate_optional_digest(
+            self.credential_binding_digest, "credential_binding_digest"
+        )
         return self
 
 
@@ -135,6 +146,8 @@ class ExecutionStep(RuntimeModel):
     route_candidate_id: RuntimeName | None = None
     fallback_on_error_codes: tuple[RuntimeName, ...] = ()
     route_fallbacks: tuple[RouteFallbackSpec, ...] = ()
+    execution_channel: ExecutionChannel = ExecutionChannel.API
+    credential_binding_digest: str | None = None
 
     @model_validator(mode="after")
     def validate_step(self) -> ExecutionStep:
@@ -161,6 +174,9 @@ class ExecutionStep(RuntimeModel):
             raise ValueError("route fallback candidate ids must be unique")
         if self.route_candidate_id in fallback_ids:
             raise ValueError("selected route cannot also be a fallback")
+        _validate_optional_digest(
+            self.credential_binding_digest, "credential_binding_digest"
+        )
         _reject_secret_values(self.input)
         if self.compensation is not None:
             _reject_secret_values(self.compensation.input)
@@ -171,12 +187,15 @@ class ExecutionPlan(RuntimeModel):
     schema_version: Literal["cargomesh.execution-plan/v1"] = EXECUTION_PLAN_SCHEMA_VERSION
     transaction_id: RuntimeIdentifier
     tenant_id: RuntimeIdentifier
+    environment_id: RuntimeIdentifier = "local"
     business_digest: str
     risk_class: RiskClass
     verification_level: VerificationLevel
+    data_classification: DataClassification = DataClassification.INTERNAL
     steps: tuple[ExecutionStep, ...]
     verification: VerificationPlan | None = None
     routing_decisions: tuple[RouteDecision, ...] = ()
+    policy_decisions: tuple[PolicyDecision, ...] = ()
 
     @model_validator(mode="after")
     def validate_plan(self) -> ExecutionPlan:
@@ -221,17 +240,73 @@ class ExecutionPlan(RuntimeModel):
                 != tuple(item.candidate_id for item in step.route_fallbacks)
             ):
                 raise ValueError("route decision does not match its execution step")
+        if self.policy_decisions:
+            attempts = [
+                (
+                    step,
+                    step.route_candidate_id or step.adapter,
+                    step.adapter,
+                    step.execution_channel,
+                )
+                for step in self.steps
+            ]
+            attempts.extend(
+                (step, fallback.candidate_id, fallback.adapter, fallback.execution_channel)
+                for step in self.steps
+                for fallback in step.route_fallbacks
+            )
+            if len(attempts) != len(self.policy_decisions):
+                raise ValueError("each execution attempt requires one frozen policy decision")
+            approval_steps: set[str] = set()
+            for attempt, policy_decision in zip(
+                attempts, self.policy_decisions, strict=True
+            ):
+                step, route, adapter, channel = attempt
+                policy_input = policy_decision.input
+                if (
+                    policy_input.tenant_id != self.tenant_id
+                    or policy_input.environment_id != self.environment_id
+                    or policy_input.capability != step.capability
+                    or policy_input.risk_class is not step.risk_class
+                    or policy_input.data_classification is not self.data_classification
+                    or policy_input.requested_verification_level
+                    is not self.verification_level
+                    or policy_input.route != route
+                    or policy_input.adapter != adapter
+                    or policy_input.channel is not channel
+                ):
+                    raise ValueError("policy decision does not match its execution attempt")
+                if policy_decision.effect is PolicyEffect.DENY:
+                    raise ValueError("denied execution attempts cannot enter a plan")
+                if policy_decision.effect is PolicyEffect.REQUIRE_APPROVAL:
+                    approval_steps.add(step.step_id)
+            for step in self.steps:
+                if step.step_id in approval_steps and not step.requires_approval:
+                    raise ValueError("policy approval must be frozen into the execution step")
         return self
 
 
 class AdapterInvocation(RuntimeModel):
     transaction_id: RuntimeIdentifier
     tenant_id: RuntimeIdentifier
+    environment_id: RuntimeIdentifier = "local"
     step_id: RuntimeName
+    capability: RuntimeName | None = None
     adapter: RuntimeName
     operation: RuntimeName
     input: dict[str, JsonValue]
     route_candidate_id: RuntimeName | None = None
+    credential_binding_digest: str | None = None
+
+    @model_validator(mode="after")
+    def validate_credentials(self) -> AdapterInvocation:
+        _validate_optional_digest(
+            self.credential_binding_digest, "credential_binding_digest"
+        )
+        if self.credential_binding_digest is not None and self.capability is None:
+            raise ValueError("credential binding requires a capability scope")
+        _reject_secret_values(self.input)
+        return self
 
 
 class AdapterResult(RuntimeModel):
@@ -288,6 +363,7 @@ class ExecutionSnapshot(RuntimeModel):
     failure_code: RuntimeName | None = None
     verification: VerificationReport | None = None
     routing_decisions: tuple[RouteDecision, ...] = ()
+    policy_decisions: tuple[PolicyDecision, ...] = ()
     route_attempts: tuple[RouteAttempt, ...] = ()
 
     @property
@@ -307,3 +383,8 @@ def _reject_secret_values(value: JsonValue, *, path: str = "input") -> None:
     elif isinstance(value, list):
         for index, item in enumerate(value):
             _reject_secret_values(item, path=f"{path}[{index}]")
+
+
+def _validate_optional_digest(value: str | None, label: str) -> None:
+    if value is not None and _DIGEST_RE.fullmatch(value) is None:
+        raise ValueError(f"{label} must be a lowercase sha256 digest")

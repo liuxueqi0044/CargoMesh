@@ -45,6 +45,7 @@ class CapabilityBinding(BaseModel):
     approval_timeout_seconds: int | None = None
     timeout_seconds: int = 60
     retry: RetryPolicySpec = RetryPolicySpec()
+    execution_channel: ExecutionChannel = ExecutionChannel.API
 
 
 class MissingCapabilityBinding(ValueError):
@@ -99,6 +100,7 @@ class StaticExecutionPlanner:
                     retry=binding.retry,
                     requires_approval=binding.requires_approval,
                     approval_timeout_seconds=binding.approval_timeout_seconds,
+                    execution_channel=binding.execution_channel,
                 )
             )
             previous_step_id = step_id
@@ -228,6 +230,7 @@ class OptimizingExecutionPlanner:
                     route_candidate_id=selected.candidate_id,
                     fallback_on_error_codes=selected.fallback_on_error_codes,
                     route_fallbacks=fallbacks,
+                    execution_channel=selected.channel,
                 )
             )
             decisions.append(decision)
@@ -240,6 +243,7 @@ class OptimizingExecutionPlanner:
             verification_level=(
                 command.verification_requirements.minimum_independence_level
             ),
+            data_classification=self._data_classification,
             steps=tuple(steps),
             verification=(
                 self._verification_factory(command)
@@ -262,6 +266,7 @@ def _runtime_fallback(candidate: RouteCandidate) -> RouteFallbackSpec:
         timeout_seconds=candidate.timeout_seconds,
         retry=_runtime_retry(candidate),
         fallback_on_error_codes=candidate.fallback_on_error_codes,
+        execution_channel=candidate.channel,
     )
 
 
@@ -283,7 +288,9 @@ def synthetic_browser_tracking_planner() -> StaticExecutionPlanner:
     return StaticExecutionPlanner(
         {
             "shipment.track.read": CapabilityBinding(
-                adapter="synthetic.browser.track", operation="fetch"
+                adapter="synthetic.browser.track",
+                operation="fetch",
+                execution_channel=ExecutionChannel.BROWSER,
             )
         }
     )
@@ -295,7 +302,9 @@ def synthetic_verified_browser_tracking_planner() -> StaticExecutionPlanner:
     return StaticExecutionPlanner(
         {
             "shipment.track.read": CapabilityBinding(
-                adapter="synthetic.browser.track", operation="fetch"
+                adapter="synthetic.browser.track",
+                operation="fetch",
+                execution_channel=ExecutionChannel.BROWSER,
             )
         },
         verification_factory=_synthetic_tracking_verification,

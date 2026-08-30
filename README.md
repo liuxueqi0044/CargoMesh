@@ -14,6 +14,9 @@ policy, outcome-derived health, integer scoring, and audited read-only fallback.
 Board 6 verifies externally issued OIDC tokens, resolves tenant/environment
 membership from CargoMesh-owned data, applies a fixed RBAC matrix, and writes
 append-only per-tenant audit hash chains.
+Board 7 freezes payload-free policy decisions for every possible execution
+attempt and resolves opaque credential references only inside the worker
+Activity that invokes a credential-aware adapter.
 
 Execution without a configured verifier remains deliberately named
 `EXECUTED_UNVERIFIED`. Only a separate evidence collector can produce
@@ -52,11 +55,13 @@ evidence becomes `HALTED`.
 | Tenant RBAC | Server-owned memberships for six transaction/control-plane actions with fail-closed provider handling |
 | Security audit | Bounded immutable events in independent tenant hash chains with replay and tamper detection |
 | Protected runtime | Explicit opt-in 401/403/404 enforcement and verified approval actors; local mode stays compatible |
+| Execution policy | Digest-bound embedded/OPA-shaped decisions, deterministic rules, fail-closed denial, frozen approval requirements |
+| Credential boundary | Tenant/environment/adapter/capability-scoped references, metadata-only SQLite directory, ephemeral wiped leases |
 
 The first accepted capability remains `shipment.track.read`. Board 3 supplies a
-synthetic API and browser adapters, not real carrier integrations. Board 6
-supplies a single-node production-style authentication/authorization boundary;
-identity-provider hosting, EDI/human executors, management APIs, and a
+synthetic API and browser adapters, not real carrier integrations. Boards 6–7
+supply single-node production-style access, policy, and credential boundaries;
+identity-provider/Vault/OPA hosting, EDI/human executors, management APIs, and a
 distributed control-plane database belong to later boards.
 
 ## Quick start
@@ -260,6 +265,22 @@ tenant sees 404, while an in-tenant role without the action sees 403. Protected
 requests write authorization and outcome events to the audit ledger; an audit
 or membership-provider failure prevents the operation. Use
 `SQLiteAuditStore.verify_chain(tenant_id)` to detect the first damaged record.
+
+### Board 7 policy and credential boundary
+
+`apply_execution_policy` evaluates metadata-only inputs before Temporal starts.
+Its immutable plan records the exact policy, input, decision, route, channel,
+and optional credential-binding digest for every primary and fallback attempt.
+`DENY` stops submission, provider failures fail closed, and
+`REQUIRE_APPROVAL` becomes a durable approval boundary.
+
+Credential bindings contain provider-qualified opaque references, never secret
+values. `AdapterActivities` rechecks the complete tenant/environment/adapter/
+capability scope and frozen binding digest, resolves short-lived leases through
+an explicitly registered provider, calls only a credential-aware adapter, and
+closes every lease on success, failure, or partial resolution. The included
+environment and memory providers are explicit local/bootstrap surfaces; a
+production secret manager remains deployment-owned.
 
 Submit a compiled IR or DCSA TNT source using the same body accepted by the
 compiler endpoint:

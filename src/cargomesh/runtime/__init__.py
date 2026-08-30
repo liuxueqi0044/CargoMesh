@@ -28,6 +28,7 @@ from .planner import (
     synthetic_tracking_planner,
     synthetic_verified_browser_tracking_planner,
 )
+from .policy import PolicyPlanningError, apply_execution_policy
 from .state_machine import InvalidExecutionTransition, transition
 
 __all__ = [
@@ -44,6 +45,7 @@ __all__ = [
     "InvalidExecutionTransition",
     "MissingCapabilityBinding",
     "OptimizingExecutionPlanner",
+    "PolicyPlanningError",
     "RetryPolicySpec",
     "RouteAttempt",
     "RouteFallbackSpec",
@@ -52,6 +54,7 @@ __all__ = [
     "StaticExecutionPlanner",
     "StaticRoutingPolicyProvider",
     "StepOutput",
+    "apply_execution_policy",
     "synthetic_browser_tracking_planner",
     "synthetic_optimized_tracking_planner",
     "synthetic_tracking_planner",

@@ -9,7 +9,9 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ConfigDict
 
 from cargomesh.application.compile import CompilationResult
+from cargomesh.credentials import CredentialBindingStore
 from cargomesh.ir import TransactionCommand
+from cargomesh.policy import PolicyProvider
 from cargomesh.runtime.idempotency import (
     IdempotencyConflict,
     SubmissionReservation,
@@ -17,6 +19,7 @@ from cargomesh.runtime.idempotency import (
     SubmissionStore,
 )
 from cargomesh.runtime.models import ApprovalDecision, ExecutionPlan, ExecutionSnapshot
+from cargomesh.runtime.policy import PolicyPlanningError, apply_execution_policy
 
 
 class ExecutionPlanner(Protocol):
@@ -79,13 +82,34 @@ class TransactionService:
         planner: ExecutionPlanner,
         submissions: SubmissionStore,
         gateway: ExecutionGateway,
+        policy_provider: PolicyProvider | None = None,
+        policy_environment_id: str = "local",
+        credential_bindings: CredentialBindingStore | None = None,
+        default_approval_timeout_seconds: int = 86_400,
     ) -> None:
         self._planner = planner
         self._submissions = submissions
         self._gateway = gateway
+        self._policy_provider = policy_provider
+        self._policy_environment_id = policy_environment_id
+        self._credential_bindings = credential_bindings
+        self._default_approval_timeout_seconds = default_approval_timeout_seconds
 
     async def submit(
         self, compilation: CompilationResult, idempotency_key: str
+    ) -> TransactionSubmission:
+        return await self.submit_with_context(
+            compilation,
+            idempotency_key,
+            principal_ref="runtime.service",
+        )
+
+    async def submit_with_context(
+        self,
+        compilation: CompilationResult,
+        idempotency_key: str,
+        *,
+        principal_ref: str,
     ) -> TransactionSubmission:
         command = compilation.command
         if not isinstance(command, TransactionCommand):
@@ -120,6 +144,24 @@ class TransactionService:
                 transaction_id=reservation.transaction_id,
                 business_digest=reservation.business_digest,
             )
+            if self._policy_provider is not None:
+                plan = await apply_execution_policy(
+                    plan,
+                    self._policy_provider,
+                    environment_id=self._policy_environment_id,
+                    principal_ref=principal_ref,
+                    credential_bindings=self._credential_bindings,
+                    default_approval_timeout_seconds=(
+                        self._default_approval_timeout_seconds
+                    ),
+                )
+        except PolicyPlanningError as exc:
+            self._mark_start_failed(reservation, exc.code)
+            raise TransactionServiceError(
+                exc.code,
+                exc.message,
+                status_code=exc.status_code,
+            ) from exc
         except Exception as exc:
             self._mark_start_failed(reservation, "planning_failed")
             raise TransactionServiceError(
