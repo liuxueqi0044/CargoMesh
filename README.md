@@ -32,6 +32,9 @@ with a deterministic fault/drift TCK.
 Board 12 adds an optional isolated repair proposal lifecycle with frozen model
 budgets, exact JSON scope, base/TCK/security validation, verified approval,
 independent canary evidence and fail-closed rollback.
+Board 13 adds payload-free telemetry/SLOs, supply-chain attestations, verified
+SQLite backup/restore, truthful deployment profiles, non-synthetic VERIFIED
+usage metering and an evidence-gated adapter catalog.
 
 Execution without a configured verifier remains deliberately named
 `EXECUTED_UNVERIFIED`. Only a separate evidence collector can produce
@@ -79,13 +82,16 @@ evidence becomes `HALTED`.
 | Additional channels | Metadata-only EDIFACT and MIME/PDF boundaries, attended-task fencing and existing-plan compilation |
 | Adapter Factory | Reviewed semantic bindings, canonical existing-format packages, fault/drift TCK and digest-bound certification |
 | Isolated repair | Reserved model budgets, ephemeral scoped JSON candidates, validation gates, approval, canary and rollback |
+| Platform hardening | Payload-free telemetry/SLOs, SBOM/provenance, safe backup/restore and deployment configuration |
+| Commercial boundaries | Non-synthetic VERIFIED-only usage and package/certification/TCK/attestation-gated catalog publication |
 
 The accepted execution demonstrations are `shipment.track.read` and the
 explicitly synthetic `booking.create` vertical slice. Board 3 supplies a
-synthetic API and browser adapters, not real carrier integrations. Boards 6–10
-supply single-node production-style control and channel boundaries;
-identity-provider/Vault/OPA hosting, real EDI/mail/human delivery, management
-APIs, and a distributed control-plane database remain external.
+synthetic API and browser adapters, not real carrier integrations. Boards 6–13
+supply local reference control, channel, factory and platform boundaries;
+identity-provider/Vault/OPA/KMS hosting, real EDI/mail/human delivery, cloud
+rollout, payments, legal approval and a distributed control plane remain
+external.
 
 ## Quick start
 
@@ -390,6 +396,7 @@ src/cargomesh/
 ├─ factory/         reviewed semantic bindings, package builder, TCK and drift reports
 ├─ ir/              Transaction IR, canonicalization and migrations
 ├─ mapping/         DCSA TNT mapper, diagnostics and registry
+├─ platform/        telemetry, SLO, supply chain, backup, deployment, usage and catalog
 ├─ repair/          isolated candidate budget, validation, approval, canary and rollback
 ├─ routing/         execution candidates, policy ranking, outcomes and circuit health
 ├─ runtime/         plans, state machine, idempotency, Temporal and adapter boundary
