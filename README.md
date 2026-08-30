@@ -24,6 +24,8 @@ Board 9 adds one explicitly synthetic DCSA Booking 2.0.5 write slice with a
 typed dry-container IR, mandatory approval, tenant policy, credential-scoped
 submit/cancel, single-attempt unknown-effect reconciliation, and independent
 ledger verification.
+Board 10 adds bounded EDIFACT parsing, fail-closed MIME/PDF metadata ingestion,
+fenced attended-human tasks, and deterministic EDI/HUMAN plan compilation.
 
 Execution without a configured verifier remains deliberately named
 `EXECUTED_UNVERIFIED`. Only a separate evidence collector can produce
@@ -68,13 +70,14 @@ evidence becomes `HALTED`.
 | Runner task transport | Atomic SQLite acquisition, monotonic fencing, bounded heartbeat, conservative recovery and idempotent receipts |
 | Runner execution policy | Artifact relay, sandbox/egress/session contracts, SemVer compatibility and non-overclaiming deployment profiles |
 | Verified Booking write | Pinned DCSA 2.0.5 subset, approval, idempotent synthetic submit, L2 ledger read-back and reference-bound cancellation |
+| Additional channels | Metadata-only EDIFACT and MIME/PDF boundaries, attended-task fencing and existing-plan compilation |
 
 The accepted execution demonstrations are `shipment.track.read` and the
 explicitly synthetic `booking.create` vertical slice. Board 3 supplies a
-synthetic API and browser adapters, not real carrier integrations. Boards 6–9
-supply single-node production-style access, policy, and credential boundaries;
-identity-provider/Vault/OPA hosting, EDI/human executors, management APIs, and a
-distributed control-plane database belong to later boards.
+synthetic API and browser adapters, not real carrier integrations. Boards 6–10
+supply single-node production-style control and channel boundaries;
+identity-provider/Vault/OPA hosting, real EDI/mail/human delivery, management
+APIs, and a distributed control-plane database remain external.
 
 ## Quick start
 
@@ -374,6 +377,7 @@ src/cargomesh/
 ├─ adapters/        versioned packages, restricted browser executor and synthetic portal
 ├─ api/             FastAPI transport and safe error envelopes
 ├─ application/     compile and reference-data use cases
+├─ channels/        bounded EDI, MIME/PDF and attended-human contracts
 ├─ controlplane/    OIDC principals, tenant RBAC, access orchestration and audit chains
 ├─ ir/              Transaction IR, canonicalization and migrations
 ├─ mapping/         DCSA TNT mapper, diagnostics and registry
