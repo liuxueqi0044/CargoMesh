@@ -1,45 +1,22 @@
 # CargoMesh
 
-CargoMesh is a business-transaction compiler and durable execution runtime for
-container logistics. Board 1 turns a pinned DCSA Track & Trace 2.3 query into
-deterministic, versioned Transaction IR. Board 2 submits an execution plan
-idempotently and runs it through Temporal with explicit approval, retry,
-compensation, cancellation, and queryable state.
-Board 3 executes checksum-pinned, read-only browser recipes in isolated
-Playwright contexts and stops on portal drift.
-Board 4 collects separately sourced evidence, persists immutable receipts, and
-produces deterministic, digest-protected verification reports.
-Board 5 selects among API, EDI, browser, and attended paths using digest-bound
-policy, outcome-derived health, integer scoring, and audited read-only fallback.
-Board 6 verifies externally issued OIDC tokens, resolves tenant/environment
-membership from CargoMesh-owned data, applies a fixed RBAC matrix, and writes
-append-only per-tenant audit hash chains.
-Board 7 freezes payload-free policy decisions for every possible execution
-attempt and resolves opaque credential references only inside the worker
-Activity that invokes a credential-aware adapter.
-Board 8 supplies an offline Private Runner reference boundary for one-time
-enrollment, pinned identity, fenced task leases, heartbeat recovery, artifact
-relay, sandbox declarations, and signed-release policy.
-Board 9 adds one explicitly synthetic DCSA Booking 2.0.5 write slice with a
-typed dry-container IR, mandatory approval, tenant policy, credential-scoped
-submit/cancel, single-attempt unknown-effect reconciliation, and independent
-ledger verification.
-Board 10 adds bounded EDIFACT parsing, fail-closed MIME/PDF metadata ingestion,
-fenced attended-human tasks, and deterministic EDI/HUMAN plan compilation.
-Board 11 adds a metadata-only Adapter Factory that compiles reviewed semantic
-bindings into the existing package format and certifies exact package digests
-with a deterministic fault/drift TCK.
-Board 12 adds an optional isolated repair proposal lifecycle with frozen model
-budgets, exact JSON scope, base/TCK/security validation, verified approval,
-independent canary evidence and fail-closed rollback.
-Board 13 adds payload-free telemetry/SLOs, supply-chain attestations, verified
-SQLite backup/restore, truthful deployment profiles, non-synthetic VERIFIED
-usage metering and an evidence-gated adapter catalog.
+CargoMesh turns container-logistics requests into reliable, auditable transactions across APIs, EDI, browser workflows, private runners, and attended human operations.
 
-Execution without a configured verifier remains deliberately named
-`EXECUTED_UNVERIFIED`. Only a separate evidence collector can produce
-`VERIFIED`; conflicts become `NEEDS_REVIEW`, and missing, stale, or insufficient
-evidence becomes `HALTED`.
+A carrier portal returning “success” is not enough. CargoMesh keeps execution, approval, recovery, and independent verification separate so a retry does not duplicate work, a failure does not disappear, and an ambiguous external outcome is never silently reported as complete.
+
+## Transaction lifecycle
+
+`Request → Compile → Approve → Execute → Verify → Complete / Review / Halt`
+
+- **Compile:** Normalize different logistics contracts and channels into deterministic, versioned Transaction IR.
+- **Approve:** Freeze policy and require human authority before consequential writes.
+- **Execute:** Run durable, idempotent workflows with bounded retries, cancellation, compensation, and repair paths.
+- **Verify:** Collect separately sourced evidence; execution alone produces `EXECUTED_UNVERIFIED`, never `VERIFIED`.
+- **Recover:** Route conflicts to `NEEDS_REVIEW` and missing or stale evidence to `HALTED` instead of inventing success.
+
+## Engineering depth
+
+Temporal durable workflows · pinned DCSA contracts · API / EDI / browser / human adapters · OIDC and tenant-scoped RBAC · isolated Playwright execution · append-only audit chains · credential isolation · adapter certification · verified backup and restore
 
 ## Implemented surface
 
